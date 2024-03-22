@@ -186,6 +186,13 @@ Enum=tracecontext;baggage;b3;b3multi;jaeger;xray;ottrace;none<br/>
           Sampler defines sampling configuration.<br/>
         </td>
         <td>false</td>
+      </tr><tr>
+        <td><b>selector</b></td>
+        <td>map[string]string</td>
+        <td>
+          <br/>
+        </td>
+        <td>false</td>
       </tr></tbody>
 </table>
 
