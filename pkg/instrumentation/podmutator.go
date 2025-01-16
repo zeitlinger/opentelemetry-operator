@@ -426,6 +426,19 @@ func (pm *instPodMutator) Mutate(ctx context.Context, ns corev1.Namespace, pod c
 }
 
 func (pm *instPodMutator) getInstrumentationInstance(ctx context.Context, ns corev1.Namespace, pod corev1.Pod, instAnnotation string) (*v1alpha1.Instrumentation, error) {
+	// todo opt-in flag
+	fromNamespace, err := pm.selectInstrumentationInstanceFromNamespace(ctx, ns)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, a := range fromNamespace.Spec.AutoInstrumentation {
+		language := strings.Split(instAnnotation, "-")[1]
+		if strings.EqualFold(a.Language, language) && strings.EqualFold(a.Namespace, ns.Name) && pm.matchOwners(pod, a.Name) {
+			return fromNamespace, nil
+		}
+	}
+
 	instValue := annotationValue(ns.ObjectMeta, pod.ObjectMeta, instAnnotation)
 
 	if len(instValue) == 0 || strings.EqualFold(instValue, "false") {
@@ -433,7 +446,7 @@ func (pm *instPodMutator) getInstrumentationInstance(ctx context.Context, ns cor
 	}
 
 	if strings.EqualFold(instValue, "true") {
-		return pm.selectInstrumentationInstanceFromNamespace(ctx, ns)
+		return fromNamespace, err
 	}
 
 	var instNamespacedName types.NamespacedName
@@ -444,12 +457,21 @@ func (pm *instPodMutator) getInstrumentationInstance(ctx context.Context, ns cor
 	}
 
 	otelInst := &v1alpha1.Instrumentation{}
-	err := pm.Client.Get(ctx, instNamespacedName, otelInst)
+	err = pm.Client.Get(ctx, instNamespacedName, otelInst)
 	if err != nil {
 		return nil, err
 	}
 
 	return otelInst, nil
+}
+
+func (pm *instPodMutator) matchOwners(pod corev1.Pod, want string) bool {
+	for _, r := range pod.OwnerReferences {
+		if strings.EqualFold(r.Name, want) {
+			return true
+		}
+	}
+	return false
 }
 
 func (pm *instPodMutator) selectInstrumentationInstanceFromNamespace(ctx context.Context, ns corev1.Namespace) (*v1alpha1.Instrumentation, error) {

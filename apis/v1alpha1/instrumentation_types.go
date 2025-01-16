@@ -20,6 +20,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type AutoInstrumentation struct {
+	Language  string `json:"language,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Container string `json:"container,omitempty"`
+}
+
 // InstrumentationSpec defines the desired state of OpenTelemetry SDK and instrumentation.
 type InstrumentationSpec struct {
 	// Exporter defines exporter configuration.
@@ -79,6 +86,8 @@ type InstrumentationSpec struct {
 	// Nginx defines configuration for Nginx auto-instrumentation.
 	// +optional
 	Nginx Nginx `json:"nginx,omitempty"`
+
+	AutoInstrumentation []AutoInstrumentation `json:"autoInstrumentation,omitempty"`
 }
 
 // Resource defines the configuration for the resource attributes, as defined by the OpenTelemetry specification.

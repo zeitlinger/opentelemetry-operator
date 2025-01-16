@@ -1,0 +1,9 @@
+  apiVersion: opentelemetry.io/v1alpha1
+  kind: Instrumentation
+  metadata:
+    name: my-instrumentation
+  spec:
+    autoInstrumentation:
+      - namespace: default
+        name: dice
+        language: java
