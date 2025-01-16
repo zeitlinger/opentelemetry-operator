@@ -464,7 +464,7 @@ func (pm *instPodMutator) selectInstrumentationInstanceFromNamespace(ctx context
 	for _, ins := range otelInsts.Items {
 		isMatch := true
 		if ins.Spec.Selector != nil {
-			labelSelector, err := v1.LabelSelectorAsSelector(ins.Spec.Selector)
+			labelSelector, err := metav1.LabelSelectorAsSelector(ins.Spec.Selector)
 			if err != nil {
 				return nil, err
 			}
