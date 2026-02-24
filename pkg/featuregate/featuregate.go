@@ -61,7 +61,7 @@ var (
 	// EnableDevicePluginInjection is the feature gate that enables device-plugin-based
 	// auto-instrumentation instead of init containers.
 	EnableDevicePluginInjection = featuregate.GlobalRegistry().MustRegister(
-		"operator.instrumentation.device-plugin",
+		"operator.instrumentation.deviceplugin",
 		featuregate.StageAlpha,
 		featuregate.WithRegisterDescription("enables device-plugin-based auto-instrumentation instead of init containers"),
 	)
