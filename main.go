@@ -434,13 +434,16 @@ func main() {
 			os.Exit(1)
 		}
 		decoder := admission.NewDecoder(mgr.GetScheme())
+		mutators := []podmutation.PodMutator{
+			sidecar.NewMutator(logger, cfg, mgr.GetClient()),
+		}
+		if featuregate.EnableDevicePluginInjection.IsEnabled() {
+			mutators = append(mutators, deviceplugin.NewMutator(logger, mgr.GetClient()))
+		} else {
+			mutators = append(mutators, instrumentation.NewMutator(logger, mgr.GetClient(), mgr.GetEventRecorderFor("opentelemetry-operator"), cfg))
+		}
 		mgr.GetWebhookServer().Register("/mutate-v1-pod", &webhook.Admission{
-			Handler: podmutation.NewWebhookHandler(cfg, ctrl.Log.WithName("pod-webhook"), decoder, mgr.GetClient(),
-				[]podmutation.PodMutator{
-					sidecar.NewMutator(logger, cfg, mgr.GetClient()),
-					instrumentation.NewMutator(logger, mgr.GetClient(), mgr.GetEventRecorderFor("opentelemetry-operator"), cfg),
-					deviceplugin.NewMutator(logger, mgr.GetClient()),
-				}),
+			Handler: podmutation.NewWebhookHandler(cfg, ctrl.Log.WithName("pod-webhook"), decoder, mgr.GetClient(), mutators),
 		})
 
 		if cfg.OpAmpBridgeAvailability == opampbridge.Available {
