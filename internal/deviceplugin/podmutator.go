@@ -178,6 +178,11 @@ func injectOTELEnvVars(container *corev1.Container, inst *v1alpha1.Instrumentati
 	for _, env := range inst.Spec.Env {
 		setEnvVarIfNotPresent(container, env.Name, env.Value)
 	}
+
+	// Java-specific env vars from the Instrumentation CR.
+	for _, env := range inst.Spec.Java.Env {
+		setEnvVarIfNotPresent(container, env.Name, env.Value)
+	}
 }
 
 // serviceNameFromPod derives the service name from pod metadata.
