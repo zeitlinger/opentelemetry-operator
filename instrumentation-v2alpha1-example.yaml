@@ -1,0 +1,277 @@
+---
+# v2alpha1 Instrumentation CR — annotated reference example
+#
+# This CR is cluster-scoped (no namespace field on the resource itself).
+# At pod admission time, every container in every pod is evaluated against all
+# Instrumentation CRs. The CR with the highest priority wins; within that CR
+# the first matching rule wins for each container. If no rule matches a container,
+# that container receives no instrumentation.
+
+apiVersion: instrumentation.opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: platform-instrumentation
+spec:
+
+  # priority: used to break ties when multiple Instrumentation CRs exist.
+  # Higher value wins. Tied priority falls back to earliest creation timestamp.
+  # Omitting priority is equivalent to priority: 0.
+  priority: 10
+
+  injector:
+    # image: the composite SDK image bundling all language agents + injector binary.
+    # Bumping this tag upgrades all language agents at once.
+    image: ghcr.io/example/composite-sdk:v1.2.0
+
+    # Per-language image overrides: when set, the operator runs a dedicated init
+    # container for that language instead of relying on the composite image.
+    # Use this to upgrade or pin individual language agents independently.
+    # Unset languages continue to use the composite image.
+    java:
+      image: ghcr.io/example/java-agent:v2.11.0   # pinned ahead of composite
+
+  # rules: evaluated top-to-bottom; first match wins.
+  # If no rule matches, the pod receives no instrumentation (safe default).
+  # An empty selector at the end acts as a catch-all.
+  rules:
+
+    # ── Rule 1: SaaS product namespaces → paid observability backend ──────────
+    #
+    # Demonstrates the secrets + declarative config pattern:
+    #
+    #   1. The auth token is injected as an env var via secretKeyRef.
+    #      The secret value never appears in the CR.
+    #   2. The declarative config references ${OTEL_AUTH_TOKEN} at SDK startup.
+    #
+    # Also demonstrates custom histogram bucket boundaries via a meter_provider
+    # view — something that cannot be expressed via environment variables alone.
+    #
+    # Important: when declarativeConfig is present, SDKs ignore OTEL_* env vars
+    # for SDK configuration. All SDK settings must live in the config document.
+    # Use ${VAR} substitution to bridge secrets and operator-injected values
+    # from env into the document.
+    - name: saas-product-backend
+      selector:
+        # namespaces: exact-match list. All listed namespaces are included (OR between
+        # entries). Empty list = all namespaces.
+        namespaces:
+          - production
+          - staging
+        # podLabels: all entries must match the pod (AND semantics), same as
+        # LabelSelector.matchLabels. Empty map = all pods in the listed namespaces.
+        podLabels:
+          app.kubernetes.io/part-of: my-saas-product
+      config:
+        env:
+          # Inject the auth token from a Kubernetes Secret. The value is never
+          # written to the CR; it is resolved at pod admission time.
+          - name: OTEL_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: observability-backend-credentials
+                key: api-token
+        # declarativeConfig: inline OpenTelemetry declarative configuration (file_format: "1.0").
+        # Write native YAML here — no string quoting needed.
+        # The operator mounts this as a ConfigMap and sets OTEL_CONFIG_FILE on each
+        # instrumented container. The SDK loads it at startup.
+        declarativeConfig:
+          file_format: "1.0"
+          resource:
+            # OTEL_RESOURCE_ATTRIBUTES is injected by the operator and contains k8s
+            # resource attributes: pod name, node name, deployment name, namespace, etc.
+            # Referencing it here pulls those attributes into the declarative config.
+            attributes_list: ${OTEL_RESOURCE_ATTRIBUTES}
+            detection/development:
+              detectors:
+                - service: # will add "service.instance.id" and "service.name" from the OTEL_SERVICE_NAME env var
+                - host:
+                - process:
+                - container:
+          tracer_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/traces
+                      headers:
+                        # ${OTEL_AUTH_TOKEN} is substituted at SDK startup from the env
+                        # var injected above. The secret never touches the config file.
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+          meter_provider:
+            # views: customize metric stream aggregation. This is the kind of config
+            # that env vars cannot express. Here we replace the default histogram
+            # buckets with boundaries tuned for HTTP request latency (seconds).
+            views:
+              - selector:
+                  instrument_name: "http.server.request.duration"
+                  instrument_type: histogram
+                stream:
+                  aggregation:
+                    explicit_bucket_histogram:
+                      boundaries: [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 10.0]
+            readers:
+              - periodic:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/metrics
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+
+          logger_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/logs
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+
+    # ── Rule 2: containerNames — multi-language pod example ────────────────────
+    #
+    # A pod can have containers written in different languages, each needing
+    # different instrumentation config. Use containerNames to target specific
+    # containers; they are evaluated independently against the rule list.
+    #
+    # In this example a pod labelled app=payment-service has two containers:
+    #   - "api"     (Java) — routes to the paid backend with Java-tuned histogram buckets
+    #   - "worker"  (.NET) — routes to the same backend with .NET-tuned histogram buckets
+    #
+    # Two rules with the same namespace/podLabels but different containerNames
+    # handle them separately:
+    - name: payment-api-java
+      selector:
+        namespaces: [production]
+        podLabels:
+          app: payment-service
+        # containerNames: only instrument the Java API container with this rule.
+        containerNames: [api]
+      config:
+        env:
+          - name: OTEL_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: observability-backend-credentials
+                key: api-token
+        declarativeConfig:
+          file_format: "1.0"
+          resource:
+            attributes_list: ${OTEL_RESOURCE_ATTRIBUTES}
+          meter_provider:
+            views:
+              - selector:
+                  instrument_name: "http.server.request.duration"
+                  instrument_type: histogram
+                stream:
+                  aggregation:
+                    explicit_bucket_histogram:
+                      boundaries: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
+            readers:
+              - periodic:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/metrics
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+          tracer_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/traces
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+          logger_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/logs
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+
+    - name: payment-worker-dotnet
+      selector:
+        namespaces: [production]
+        podLabels:
+          app: payment-service
+        containerNames: [worker]
+      config:
+        env:
+          - name: OTEL_AUTH_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: observability-backend-credentials
+                key: api-token
+        declarativeConfig:
+          file_format: "1.0"
+          resource:
+            attributes_list: ${OTEL_RESOURCE_ATTRIBUTES}
+          meter_provider:
+            views:
+              - selector:
+                  instrument_name: "http.server.request.duration"
+                  instrument_type: histogram
+                stream:
+                  aggregation:
+                    explicit_bucket_histogram:
+                      # .NET HTTP client latencies tend to be lower — tighter buckets
+                      boundaries: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0]
+            readers:
+              - periodic:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/metrics
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+          tracer_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/traces
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+          logger_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp_http:
+                      endpoint: https://ingest.observability-vendor.com/v1/logs
+                      headers:
+                        - name: Authorization
+                          value: Bearer ${OTEL_AUTH_TOKEN}
+
+    # ── Rule 3: opt-out ────────────────────────────────────────────────────────
+    #
+    # disabled: true suppresses instrumentation for matching containers.
+    # Place opt-out rules BEFORE the catch-all so they take first-match priority.
+    # Here we exclude all containers in the "kube-system" namespace from the
+    # catch-all rule below.
+    - name: exclude-kube-system
+      selector:
+        namespaces: [kube-system]
+      config:
+        disabled: true
+
+    # ── Rule 4: catch-all → in-cluster collector ───────────────────────────────
+    #
+    # Empty selector matches all containers in all pods in all namespaces not
+    # matched by earlier rules. Uses plain env vars — no declarative config
+    # needed for simple cases. Remove this rule to leave unmatched containers
+    # uninstrumented.
+    - name: catch-all-in-cluster
+      selector: {}
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector.monitoring.svc.cluster.local:4318
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: http/protobuf

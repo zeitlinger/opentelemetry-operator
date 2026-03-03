@@ -4,26 +4,190 @@
 package v2alpha1
 
 import (
+	"encoding/json"
+	"maps"
+
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // InstrumentationSpec defines the desired state of Instrumentation.
 type InstrumentationSpec struct {
-	// Injector configures the composite SDK image and injection behavior.
+	// Priority determines which Instrumentation CR wins when multiple CRs match a pod.
+	// Higher values take precedence. Creation timestamp is used as a tiebreaker.
+	// +optional
+	Priority int `json:"priority,omitempty"`
+
+	// Injector configures the injector image and per-language agent images.
 	// +optional
 	Injector InjectorSpec `json:"injector,omitempty"`
+
+	// Rules is an ordered list of instrumentation rules. Rules are evaluated
+	// sequentially per container; the first matching rule is applied. If no rule
+	// matches, no instrumentation is applied.
+	// +optional
+	Rules []Rule `json:"rules,omitempty"`
 }
 
-// InjectorSpec defines the injector configuration.
+// InjectorSpec configures the injector and the language agent images it uses.
+// Image configuration lives here (not on individual rules) because agent versions
+// are a platform-level concern: all rules in a CR share the same agent versions.
+// To use different agent versions for different environments, create separate
+// Instrumentation CRs with different priority values.
 type InjectorSpec struct {
-	// Image is the composite SDK image containing all language agents and the injector.
+	// Image is the composite SDK image containing all language agents and the injector
+	// binary. Used as the default source for all agents. The image tag encodes the
+	// instrumentation version; bump it to upgrade all agents at once.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Java overrides the Java agent image sourced from the composite image.
+	// When set, the operator runs an additional init container using this image
+	// to provide the Java agent, instead of relying on the composite image.
+	// +optional
+	Java *LanguageInjectorSpec `json:"java,omitempty"`
+
+	// NodeJS overrides the Node.js agent image sourced from the composite image.
+	// +optional
+	NodeJS *LanguageInjectorSpec `json:"nodejs,omitempty"`
+
+	// Python overrides the Python agent image sourced from the composite image.
+	// +optional
+	Python *LanguageInjectorSpec `json:"python,omitempty"`
+
+	// DotNet overrides the .NET agent image sourced from the composite image.
+	// +optional
+	DotNet *LanguageInjectorSpec `json:"dotnet,omitempty"`
+}
+
+// LanguageInjectorSpec overrides the agent image for a specific language.
+// When specified, the operator runs a dedicated init container for this language
+// rather than relying on the composite image.
+type LanguageInjectorSpec struct {
+	// Image is the language-specific agent image.
 	// +optional
 	Image string `json:"image,omitempty"`
 }
 
+// Rule defines a single instrumentation rule consisting of a selector and the
+// configuration to apply when the selector matches.
+type Rule struct {
+	// Name is an optional human-readable label for this rule, used for debugging
+	// and status reporting.
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Selector determines which (pod, container) pairs this rule applies to.
+	// An empty selector matches all containers in all pods in all namespaces.
+	// +optional
+	Selector RuleSelector `json:"selector,omitempty"`
+
+	// Config defines what to do when this rule matches.
+	// +optional
+	Config RuleConfig `json:"config,omitempty"`
+}
+
+// RuleSelector defines the dimensions used to match containers for a rule.
+// All specified dimensions must match (AND semantics). Matching is evaluated
+// per container: namespace and pod labels are checked at the pod level, then
+// container name is checked per container.
+type RuleSelector struct {
+	// Namespaces is a list of namespaces in which this rule applies.
+	// An empty list matches all namespaces.
+	// +optional
+	Namespaces []string `json:"namespaces,omitempty"`
+
+	// PodLabels is a map of label key/value pairs. A pod must have all specified
+	// labels to match (AND semantics). An empty map matches all pods.
+	// +optional
+	PodLabels map[string]string `json:"podLabels,omitempty"`
+
+	// ContainerNames is a list of container names within matching pods to instrument.
+	// An empty list matches all containers. Use this to apply different instrumentation
+	// config to different containers in a multi-language pod.
+	// +optional
+	ContainerNames []string `json:"containerNames,omitempty"`
+}
+
+// RuleConfig defines what to do when a rule matches.
+type RuleConfig struct {
+	// Disabled, when true, suppresses instrumentation for matching containers.
+	// Use this to explicitly opt out specific containers from broader catch-all rules
+	// by placing a more specific disabled rule earlier in the list.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
+
+	// Env is a list of environment variables to inject into instrumented containers.
+	// Supports all Kubernetes EnvVar sources including valueFrom.secretKeyRef.
+	// Ignored when Disabled is true.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// DeclarativeConfig is an inline OpenTelemetry declarative configuration document
+	// (file_format: "1.0"). The operator mounts it as a ConfigMap volume and sets
+	// OTEL_CONFIG_FILE on each instrumented container. Use ${ENV_VAR} substitution
+	// syntax within the document to reference secrets injected via Env.
+	//
+	// Note: SDKs ignore OTEL_* environment variables when a config file is present;
+	// all SDK configuration must be expressed within this document. Use ${ENV_VAR}
+	// substitution to bridge secrets from Env into the config file.
+	//
+	// Ignored when Disabled is true.
+	// +optional
+	// +kubebuilder:pruning:PreserveUnknownFields
+	// +kubebuilder:validation:Schemaless
+	DeclarativeConfig *DeclarativeConfig `json:"declarativeConfig,omitempty"`
+}
+
+// DeclarativeConfig holds an OpenTelemetry declarative configuration document as
+// structured YAML/JSON. Users write native YAML nested under this field; the operator
+// mounts the result as a file without interpreting the contents.
+type DeclarativeConfig struct {
+	Object map[string]any `json:"-" yaml:",inline"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (d *DeclarativeConfig) UnmarshalJSON(b []byte) error {
+	vals := map[string]any{}
+	if err := json.Unmarshal(b, &vals); err != nil {
+		return err
+	}
+	d.Object = vals
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler.
+func (d *DeclarativeConfig) MarshalJSON() ([]byte, error) {
+	if d == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(d.Object)
+}
+
+// DeepCopyInto copies the receiver into out. Manual implementation required
+// because controller-gen cannot handle map[string]any.
+func (d *DeclarativeConfig) DeepCopyInto(out *DeclarativeConfig) {
+	*out = *d
+	if d.Object != nil {
+		in, out := &d.Object, &out.Object
+		*out = make(map[string]any, len(*in))
+		maps.Copy(*out, *in)
+	}
+}
+
+// DeepCopy returns a deep copy of the receiver.
+func (d *DeclarativeConfig) DeepCopy() *DeclarativeConfig {
+	if d == nil {
+		return nil
+	}
+	out := new(DeclarativeConfig)
+	d.DeepCopyInto(out)
+	return out
+}
+
 // Instrumentation is the Schema for the instrumentations API.
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:shortName=instr2
+// +kubebuilder:resource:scope=Cluster,shortName=instr2
 type Instrumentation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
