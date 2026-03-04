@@ -1,0 +1,22 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-declarative-config
+spec:
+  injector:
+    image: busybox:latest
+  rules:
+    - name: with-config
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318
+        declarativeConfig:
+          file_format: "1.0"
+          tracer_provider:
+            processors:
+              - batch:
+                  exporter:
+                    otlp:
+                      protocol: http/protobuf
+                      endpoint: http://otel-collector:4318

@@ -6,6 +6,7 @@ package injector
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -199,7 +200,7 @@ func (r *InstrumentationReconciler) buildDesiredConfigMaps(ctx context.Context, 
 }
 
 // resolveNamespaces returns the list of target namespaces. If explicit is empty,
-// returns all existing namespaces (catch-all).
+// returns all existing namespaces except Kubernetes system namespaces (catch-all).
 func (r *InstrumentationReconciler) resolveNamespaces(ctx context.Context, explicit []string) ([]string, error) {
 	if len(explicit) > 0 {
 		return explicit, nil
@@ -212,9 +213,18 @@ func (r *InstrumentationReconciler) resolveNamespaces(ctx context.Context, expli
 
 	namespaces := make([]string, 0, len(nsList.Items))
 	for _, ns := range nsList.Items {
+		if isSystemNamespace(ns.Name) {
+			continue
+		}
 		namespaces = append(namespaces, ns.Name)
 	}
 	return namespaces, nil
+}
+
+// isSystemNamespace returns true for Kubernetes system namespaces that should
+// not receive injected ConfigMaps from catch-all rules.
+func isSystemNamespace(name string) bool {
+	return strings.HasPrefix(name, "kube-")
 }
 
 // upsertConfigMap creates or updates a ConfigMap.
@@ -280,7 +290,7 @@ func needsFinalizer(inst v2alpha1.Instrumentation) bool {
 func ConfigMapName(instName, ruleName string) string {
 	name := fmt.Sprintf("otel-injector-%s-%s", instName, ruleName)
 	if len(name) > 253 {
-		name = name[:253]
+		name = truncateWithHash(name, 253)
 	}
 	return name
 }

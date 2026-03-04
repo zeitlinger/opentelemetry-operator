@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: my-app
+spec:
+  containers:
+    - name: myapp
+      env:
+        - name: LD_PRELOAD
+          value: /otel/libotelinject.so
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector:4318
+        - name: OTEL_CONFIG_FILE
+          value: /otel/config/otel-config.yaml
+        - name: OTEL_EXPERIMENTAL_CONFIG_FILE
+          value: /otel/config/otel-config.yaml
+      volumeMounts:
+        - name: otel-injector
+          mountPath: /otel
+        - name: otel-config-with-config
+          mountPath: /otel/config
+          readOnly: true
+  initContainers:
+    - name: otel-injector-init
+      image: busybox:latest
+  volumes:
+    - name: otel-injector
+      emptyDir: {}
+    - name: otel-config-with-config
+      configMap:
+        name: otel-injector-injector-declarative-config-with-config
+status:
+  phase: Running

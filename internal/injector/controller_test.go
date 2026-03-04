@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -86,6 +87,7 @@ func TestReconcile_CreatesConfigMaps(t *testing.T) {
 func TestReconcile_CatchAllCreatesInAllNamespaces(t *testing.T) {
 	ns1 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns1"}}
 	ns2 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns2"}}
+	kubeSystem := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}}
 	inst := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "global"},
 		Spec: v2alpha1.InstrumentationSpec{
@@ -102,7 +104,7 @@ func TestReconcile_CatchAllCreatesInAllNamespaces(t *testing.T) {
 		},
 	}
 
-	r, cli := newReconciler(ns1, ns2, inst)
+	r, cli := newReconciler(ns1, ns2, kubeSystem, inst)
 
 	_, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: client.ObjectKeyFromObject(inst),
@@ -115,6 +117,11 @@ func TestReconcile_CatchAllCreatesInAllNamespaces(t *testing.T) {
 		err = cli.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: cmName}, &cm)
 		require.NoError(t, err, "expected ConfigMap in namespace %s", ns)
 	}
+
+	// System namespaces should be excluded from catch-all.
+	var cm corev1.ConfigMap
+	err = cli.Get(context.Background(), client.ObjectKey{Namespace: "kube-system", Name: cmName}, &cm)
+	assert.True(t, apierrors.IsNotFound(err), "should not create ConfigMap in kube-system")
 }
 
 func TestReconcile_PrunesStaleConfigMaps(t *testing.T) {
@@ -254,6 +261,58 @@ func TestConfigMapName_Truncation(t *testing.T) {
 	}
 	result := ConfigMapName(string(longName), "rule")
 	assert.LessOrEqual(t, len(result), 253)
+
+	// Different suffixes should produce different names even when truncated.
+	result2 := ConfigMapName(string(longName), "other")
+	assert.NotEqual(t, result, result2, "truncated names should differ via hash")
+}
+
+func TestDeleteAllConfigMaps(t *testing.T) {
+	cm1 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ConfigMapName("my-inst", "rule-a"),
+			Namespace: "ns1",
+			Labels: map[string]string{
+				labelManagedBy:       labelManagedByValue,
+				labelInstrumentation: "my-inst",
+				labelRule:            "rule-a",
+			},
+		},
+	}
+	cm2 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ConfigMapName("my-inst", "rule-a"),
+			Namespace: "ns2",
+			Labels: map[string]string{
+				labelManagedBy:       labelManagedByValue,
+				labelInstrumentation: "my-inst",
+				labelRule:            "rule-a",
+			},
+		},
+	}
+	// Unrelated ConfigMap — should not be deleted.
+	unrelated := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "unrelated",
+			Namespace: "ns1",
+		},
+	}
+
+	r, cli := newReconciler(cm1, cm2, unrelated)
+
+	err := r.deleteAllConfigMaps(context.Background(), "my-inst")
+	require.NoError(t, err)
+
+	// Managed ConfigMaps should be gone.
+	var got corev1.ConfigMap
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(cm1), &got)
+	assert.True(t, apierrors.IsNotFound(err), "cm1 should have been deleted")
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(cm2), &got)
+	assert.True(t, apierrors.IsNotFound(err), "cm2 should have been deleted")
+
+	// Unrelated ConfigMap should still exist.
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(unrelated), &got)
+	require.NoError(t, err, "unrelated ConfigMap should still exist")
 }
 
 func TestEnqueueAllInstrumentations(t *testing.T) {

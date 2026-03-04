@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-injector-injector-declarative-config-with-config
+  labels:
+    app.kubernetes.io/managed-by: opentelemetry-operator
+    opentelemetry.io/instrumentation: injector-declarative-config
+    opentelemetry.io/rule: with-config

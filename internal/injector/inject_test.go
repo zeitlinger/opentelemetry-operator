@@ -687,38 +687,38 @@ func TestInjectPod_DeclarativeConfig_MountsConfigMapAndSetsEnv(t *testing.T) {
 	assert.Equal(t, otelConfigFilePath, envMap[envOTelExperimentalConfigFile])
 }
 
-func TestInjectPod_DeclarativeConfig_UserCanOverrideOtelConfigFile(t *testing.T) {
-	inst := &v2alpha1.Instrumentation{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
-		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
-			Rules: []v2alpha1.Rule{
-				{
-					Name: "custom-path",
-					Config: v2alpha1.RuleConfig{
-						Env: []corev1.EnvVar{
-							{Name: envOTelConfigFile, Value: "/custom/config.yaml"},
-						},
-						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
-							Object: map[string]any{"file_format": "1.0"},
+func TestInjectPod_RejectsConfigFileEnvVars(t *testing.T) {
+	for _, envName := range []string{envOTelConfigFile, envOTelExperimentalConfigFile} {
+		t.Run(envName, func(t *testing.T) {
+			inst := &v2alpha1.Instrumentation{
+				Spec: v2alpha1.InstrumentationSpec{
+					Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+					Rules: []v2alpha1.Rule{
+						{
+							Name: "bad-rule",
+							Config: v2alpha1.RuleConfig{
+								Env: []corev1.EnvVar{
+									{Name: envName, Value: "/custom/path"},
+								},
+							},
 						},
 					},
 				},
-			},
-		},
-	}
+			}
 
-	pod := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: "test"},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "app"}},
-		},
-	}
+			pod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "app"}},
+				},
+			}
 
-	result := mustInjectPod(t, inst, pod, "default")
-	envs := result.Spec.Containers[0].Env
-	assert.Equal(t, 1, countEnv(envs, envOTelConfigFile), "expected exactly one OTEL_CONFIG_FILE")
-	assert.Equal(t, "/custom/config.yaml", findEnv(envs, envOTelConfigFile).Value)
+			_, err := injectPod(inst, pod, "default")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), envName)
+			assert.Contains(t, err.Error(), "reserved")
+		})
+	}
 }
 
 func TestInjectPod_NoDeclarativeConfig_NoConfigMount(t *testing.T) {
@@ -798,6 +798,76 @@ func TestInjectPod_DeclarativeConfig_MultipleContainersSameRule(t *testing.T) {
 			}
 		}
 		assert.True(t, hasConfigMount, "container %s should have config mount", c.Name)
+	}
+}
+
+func TestInjectPod_DeclarativeConfig_TwoRulesDifferentContainers(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name:     "java-config",
+					Selector: v2alpha1.RuleSelector{ContainerNames: []string{"java-app"}},
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0", "lang": "java"},
+						},
+					},
+				},
+				{
+					Name:     "python-config",
+					Selector: v2alpha1.RuleSelector{ContainerNames: []string{"python-app"}},
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0", "lang": "python"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "java-app"},
+				{Name: "python-app"},
+			},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// Two distinct ConfigMap volumes.
+	configVols := map[string]string{} // volume name -> ConfigMap name
+	for _, v := range result.Spec.Volumes {
+		if v.ConfigMap != nil {
+			configVols[v.Name] = v.ConfigMap.Name
+		}
+	}
+	assert.Len(t, configVols, 2)
+	assert.Equal(t, ConfigMapName("my-inst", "java-config"), configVols[configVolumeName("java-config")])
+	assert.Equal(t, ConfigMapName("my-inst", "python-config"), configVols[configVolumeName("python-config")])
+
+	// Each container gets its own config volume mount.
+	for _, c := range result.Spec.Containers {
+		var mountedVol string
+		for _, vm := range c.VolumeMounts {
+			if vm.MountPath == configMountPath {
+				mountedVol = vm.Name
+				break
+			}
+		}
+		require.NotEmpty(t, mountedVol, "container %s should have config mount", c.Name)
+
+		if c.Name == "java-app" {
+			assert.Equal(t, configVolumeName("java-config"), mountedVol)
+		} else {
+			assert.Equal(t, configVolumeName("python-config"), mountedVol)
+		}
 	}
 }
 

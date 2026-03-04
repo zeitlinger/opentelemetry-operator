@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: injector-declarative-config
+spec:
+  steps:
+    - name: step-00
+      try:
+        - apply:
+            file: 00-install-instrumentation.yaml
+        - assert:
+            file: 00-assert.yaml
+      cleanup:
+        - delete:
+            ref:
+              apiVersion: opentelemetry.io/v2alpha1
+              kind: Instrumentation
+              name: injector-declarative-config
+    - name: step-01
+      try:
+        - apply:
+            file: 01-install-app.yaml
+        - assert:
+            file: 01-assert.yaml
+      catch:
+        - podLogs:
+            selector: app=my-app

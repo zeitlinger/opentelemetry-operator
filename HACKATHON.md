@@ -320,8 +320,11 @@ kind delete cluster --name otel-operator-dev
 - [x] `OTEL_NODE_NAME` downward API for k8s.node.name
 - [x] Owner ref resource attributes (k8s.replicaset.name, k8s.statefulset.name, etc.)
 - [x] Precedence documentation (service name + resource attributes)
-- [x] Declarative config — reconciler creates ConfigMaps per rule, webhook mounts volume + sets `OTEL_CONFIG_FILE`
+- [x] Declarative config — reconciler creates ConfigMaps per rule, webhook mounts volume + sets both `OTEL_CONFIG_FILE` and `OTEL_EXPERIMENTAL_CONFIG_FILE` (both set because SDKs haven't stabilized the env var name yet)
 - [x] Controller / reconciler — watches Instrumentation CRs + namespaces, manages ConfigMap lifecycle with finalizer and pruning
+- [x] Config file env vars (`OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE`) blocked in rule env — operator sets them automatically
+- [x] Catch-all rules skip `kube-*` system namespaces
+- [x] Name truncation uses hash suffix to avoid collisions (ConfigMap names at 253, volume names at 63)
 
 ### TODO
 
@@ -335,7 +338,7 @@ kind delete cluster --name otel-operator-dev
 - [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
-- [ ] **Declarative config e2e test** — full-flow chainsaw test: CR with `declarativeConfig` → reconciler creates ConfigMap → pod gets ConfigMap volume mount + `OTEL_CONFIG_FILE`. Requires inject.go webhook changes (ConfigMap volume + env var) to land first. Add to `tests/e2e-instrumentation/injector-declarative-config/`
+- [x] **Declarative config e2e test** — `tests/e2e-instrumentation/injector-declarative-config/`
 
 ### Future work (post-hackathon)
 
@@ -386,9 +389,10 @@ Reject invalid CRs at admission time. Follow the pattern in `apis/v1alpha1/instr
 **Validations:**
 1. **Empty injector image** — `spec.injector.image` must be non-empty (CR is useless without it)
 2. **Duplicate rule names** — rule names must be unique within a CR (colliding ConfigMap names otherwise). Empty names are fine (no ConfigMap created unless declarativeConfig is set)
-3. **Reserved env var prefix** — `OTEL_INJECTOR_*` in `config.env` must be rejected (already validated at injection time in `inject.go:validateRuleEnv`, but better to catch at CR creation)
+3. **Reserved env vars** — `OTEL_INJECTOR_*`, `OTEL_CONFIG_FILE`, and `OTEL_EXPERIMENTAL_CONFIG_FILE` in `config.env` must be rejected (already validated at injection time in `inject.go:validateRuleEnv`, but better to catch at CR creation)
 4. **Rule name DNS compatibility** — when `declarativeConfig` is set, the rule name becomes part of ConfigMap name `otel-injector-{cr}-{rule}`, so it must be lowercase alphanumeric + hyphens, max ~200 chars
 5. **DeclarativeConfig requires rule name** — if a rule has `declarativeConfig` but no `name`, the ConfigMap name is indeterminate
+6. **Disabled + declarativeConfig conflict** — `disabled: true` with `declarativeConfig` set is contradictory (config would be created but never mounted). Reject at admission.
 
 **Files:**
 - `apis/v2alpha1/instrumentation_webhook.go` — new, implement `ValidateCreate`/`ValidateUpdate`/`ValidateDelete`

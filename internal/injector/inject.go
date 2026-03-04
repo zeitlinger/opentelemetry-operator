@@ -4,6 +4,8 @@
 package injector
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"strings"
@@ -161,7 +163,7 @@ func configVolumeName(ruleName string) string {
 	name := configVolumePrefix + ruleName
 	// Volume names must be <= 63 chars and DNS-compatible.
 	if len(name) > 63 {
-		name = name[:63]
+		name = truncateWithHash(name, 63)
 	}
 	return name
 }
@@ -205,11 +207,14 @@ func matchesContainerName(sel v2alpha1.RuleSelector, name string) bool {
 	return slices.Contains(sel.ContainerNames, name)
 }
 
-// validateRuleEnv returns an error if any env var in the rule uses the reserved OTEL_INJECTOR_ prefix.
+// validateRuleEnv returns an error if any env var in the rule uses reserved names.
 func validateRuleEnv(rule v2alpha1.Rule) error {
 	for _, e := range rule.Config.Env {
 		if strings.HasPrefix(e.Name, "OTEL_INJECTOR_") {
 			return fmt.Errorf("rule %q: env var %q uses reserved OTEL_INJECTOR_ prefix", rule.Name, e.Name)
+		}
+		if e.Name == envOTelConfigFile || e.Name == envOTelExperimentalConfigFile {
+			return fmt.Errorf("rule %q: env var %q is reserved — the operator sets it automatically when declarativeConfig is present", rule.Name, e.Name)
 		}
 	}
 	return nil
@@ -395,4 +400,15 @@ func appendIfNotSet(envs *[]corev1.EnvVar, env corev1.EnvVar) {
 	if !hasEnv(*envs, env.Name) {
 		*envs = append(*envs, env)
 	}
+}
+
+// truncateWithHash shortens a name to maxLen by keeping a prefix and appending
+// a short hash of the full name. This avoids collisions when two long names
+// share the same prefix.
+func truncateWithHash(name string, maxLen int) string {
+	hash := sha256.Sum256([]byte(name))
+	suffix := hex.EncodeToString(hash[:4]) // 8 hex chars
+	// prefix + "-" + suffix
+	prefixLen := maxLen - len(suffix) - 1
+	return name[:prefixLen] + "-" + suffix
 }
