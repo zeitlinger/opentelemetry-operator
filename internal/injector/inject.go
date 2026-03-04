@@ -27,6 +27,14 @@ const (
 	configMountPath    = "/otel/config"
 	otelConfigFilePath = configMountPath + "/" + configMapDataKey
 
+	// Per-language agent paths after the init container copies /autoinstrumentation/. to /otel.
+	// These match the layouts defined in images/injector-{lang}/ and the otelinject.conf defaults.
+	// Users can override these via the corresponding env vars in config.env.
+	jvmAgentPath    = "/otel/javaagent.jar"
+	nodejsAgentPath = "/otel/register.js"
+	pythonAgentPath = "/otel/python" // prefix; injector appends /glibc or /musl at runtime
+	dotnetAgentPath = "/otel/dotnet" // prefix; injector appends /glibc or /musl at runtime
+
 	envLDPreload                = "LD_PRELOAD"
 	envInjectorConfigFile       = "OTEL_INJECTOR_CONFIG_FILE"
 	envOTLPProtocol             = "OTEL_EXPORTER_OTLP_PROTOCOL"
@@ -36,12 +44,19 @@ const (
 	// instrumentation image bundles. Each SDK ignores the var it doesn't recognize.
 	envOTelConfigFile             = "OTEL_CONFIG_FILE"
 	envOTelExperimentalConfigFile = "OTEL_EXPERIMENTAL_CONFIG_FILE"
-	envInjectorK8sNamespace     = "OTEL_INJECTOR_K8S_NAMESPACE_NAME"
-	envInjectorK8sPodName       = "OTEL_INJECTOR_K8S_POD_NAME"
-	envInjectorK8sPodUID        = "OTEL_INJECTOR_K8S_POD_UID"
-	envInjectorK8sContainerName = "OTEL_INJECTOR_K8S_CONTAINER_NAME"
-	envInjectorServiceName      = "OTEL_INJECTOR_SERVICE_NAME"
-	envInjectorServiceNamespace = "OTEL_INJECTOR_SERVICE_NAMESPACE"
+	envInjectorK8sNamespace       = "OTEL_INJECTOR_K8S_NAMESPACE_NAME"
+	envInjectorK8sPodName         = "OTEL_INJECTOR_K8S_POD_NAME"
+	envInjectorK8sPodUID          = "OTEL_INJECTOR_K8S_POD_UID"
+	envInjectorK8sContainerName   = "OTEL_INJECTOR_K8S_CONTAINER_NAME"
+	envInjectorServiceName        = "OTEL_INJECTOR_SERVICE_NAME"
+	envInjectorServiceNamespace   = "OTEL_INJECTOR_SERVICE_NAMESPACE"
+
+	// Per-language agent path env var names (override the otelinject.conf defaults).
+	// These are NOT reserved — users can set them in config.env to point to custom agent locations.
+	envJVMAgentPath    = "JVM_AUTO_INSTRUMENTATION_AGENT_PATH"
+	envNodejsAgentPath = "NODEJS_AUTO_INSTRUMENTATION_AGENT_PATH"
+	envPythonAgentPath = "PYTHON_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX"
+	envDotnetAgentPath = "DOTNET_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX"
 
 	envNodeIP   = "OTEL_NODE_IP"
 	envPodIP    = "OTEL_POD_IP"
@@ -80,6 +95,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 	injectedAny := false
 
 	serviceName := deriveServiceName(pod)
+	langEnvVars := buildLangEnvVars(inst.Spec.Injector)
 
 	// Inject env vars into each app container based on matching rules.
 	for i := range pod.Spec.Containers {
@@ -100,7 +116,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			continue
 		}
 
-		// Add the shared volume + init container on first match.
+		// Add the shared volume + init containers on first match.
 		if !injectedAny {
 			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 				Name: volumeName,
@@ -108,6 +124,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			})
+			// Composite init container: copies the injector binary + all bundled agents.
 			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
 				Name:    initContainerName,
 				Image:   inst.Spec.Injector.Image,
@@ -117,6 +134,10 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 					MountPath: mountPath,
 				}},
 			})
+			// Per-language init containers: each overwrites the language-specific files
+			// from its dedicated image, overriding what the composite image provided.
+			pod.Spec.InitContainers = append(pod.Spec.InitContainers,
+				buildLangInitContainers(inst.Spec.Injector, volumeName, mountPath)...)
 			injectedAny = true
 		}
 
@@ -149,7 +170,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			})
 		}
 
-		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences)
+		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences, langEnvVars)
 		if rule.Config.DeclarativeConfig != nil {
 			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelConfigFile, Value: otelConfigFilePath})
 			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelExperimentalConfigFile, Value: otelConfigFilePath})
@@ -238,7 +259,59 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 //   - OTEL_SERVICE_NAME: SDK reads it directly, ignores resource attrs
 //   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
 //   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
-func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference) []corev1.EnvVar {
+// buildLangEnvVars returns env vars that tell the injector where to find each language's agent.
+// These are set when per-language images are configured via spec.injector.{java,nodejs,python,dotnet}.
+// Users can override any of these in config.env — appendIfNotSet semantics apply.
+func buildLangEnvVars(inj v2alpha1.InjectorSpec) []corev1.EnvVar {
+	var envs []corev1.EnvVar
+	if inj.Java != nil {
+		envs = append(envs, corev1.EnvVar{Name: envJVMAgentPath, Value: jvmAgentPath})
+	}
+	if inj.NodeJS != nil {
+		envs = append(envs, corev1.EnvVar{Name: envNodejsAgentPath, Value: nodejsAgentPath})
+	}
+	if inj.Python != nil {
+		envs = append(envs, corev1.EnvVar{Name: envPythonAgentPath, Value: pythonAgentPath})
+	}
+	if inj.DotNet != nil {
+		envs = append(envs, corev1.EnvVar{Name: envDotnetAgentPath, Value: dotnetAgentPath})
+	}
+	return envs
+}
+
+// buildLangInitContainers returns one init container per configured per-language image override.
+// Each copies /autoinstrumentation/. to the shared volume, overwriting what the composite
+// image provided for that language.
+func buildLangInitContainers(inj v2alpha1.InjectorSpec, volName, mntPath string) []corev1.Container {
+	type langOverride struct {
+		name string
+		spec *v2alpha1.LanguageInjectorSpec
+	}
+	langs := []langOverride{
+		{"java", inj.Java},
+		{"nodejs", inj.NodeJS},
+		{"python", inj.Python},
+		{"dotnet", inj.DotNet},
+	}
+	var containers []corev1.Container
+	for _, lang := range langs {
+		if lang.spec == nil || lang.spec.Image == "" {
+			continue
+		}
+		containers = append(containers, corev1.Container{
+			Name:    initContainerName + "-" + lang.name,
+			Image:   lang.spec.Image,
+			Command: []string{"cp", "-r", "/autoinstrumentation/.", mntPath},
+			VolumeMounts: []corev1.VolumeMount{{
+				Name:      volName,
+				MountPath: mntPath,
+			}},
+		})
+	}
+	return containers
+}
+
+func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference, langEnvVars []corev1.EnvVar) []corev1.EnvVar {
 	// User env vars go first so they win over operator defaults (K8s uses first occurrence).
 	envs := append([]corev1.EnvVar{}, rule.Config.Env...)
 
@@ -256,6 +329,12 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"},
 		},
 	})
+
+	// Per-language agent paths — only added if the user hasn't set them.
+	// These tell the injector where to find each language's agent after the init container copy.
+	for _, e := range langEnvVars {
+		appendIfNotSet(&envs, e)
+	}
 
 	// OTEL_INJECTOR_* vars are always set (users can't set these — blocked by validation).
 	envs = append(envs,

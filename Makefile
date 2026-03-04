@@ -74,6 +74,22 @@ INSTRUMENTATION_APACHE_HTTPD_IMG ?= ${IMG_PREFIX}/${INSTRUMENTATION_APACHE_HTTPD
 
 MUSTGATHER_IMG ?= ${IMG_PREFIX}/must-gather
 
+# Injector images (images/injector-*/) — hackathon composite SDK injection
+INJECTOR_IMG_REPO ?= injector
+INJECTOR_IMG ?= ${IMG_PREFIX}/${INJECTOR_IMG_REPO}:${VERSION}
+
+INJECTOR_JAVA_IMG_REPO ?= injector-java
+INJECTOR_JAVA_IMG ?= ${IMG_PREFIX}/${INJECTOR_JAVA_IMG_REPO}:${VERSION}
+
+INJECTOR_NODEJS_IMG_REPO ?= injector-nodejs
+INJECTOR_NODEJS_IMG ?= ${IMG_PREFIX}/${INJECTOR_NODEJS_IMG_REPO}:${VERSION}
+
+INJECTOR_PYTHON_IMG_REPO ?= injector-python
+INJECTOR_PYTHON_IMG ?= ${IMG_PREFIX}/${INJECTOR_PYTHON_IMG_REPO}:${VERSION}
+
+INJECTOR_DOTNET_IMG_REPO ?= injector-dotnet
+INJECTOR_DOTNET_IMG ?= ${IMG_PREFIX}/${INJECTOR_DOTNET_IMG_REPO}:${VERSION}
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -570,6 +586,45 @@ container-instrumentation-apache-httpd:
 # Build all auto-instrumentation container images
 .PHONY: container-instrumentation-all
 container-instrumentation-all: container-instrumentation-java container-instrumentation-nodejs container-instrumentation-python container-instrumentation-dotnet container-instrumentation-apache-httpd
+
+##@ Injector Images (hackathon composite SDK injection)
+# Build the injector binary image (libotelinject.so + otelinject.conf)
+.PHONY: container-injector
+container-injector:
+	docker build --load -t ${INJECTOR_IMG} images/injector
+
+# Build the Java agent image
+.PHONY: container-injector-java
+container-injector-java:
+	docker build --load -t ${INJECTOR_JAVA_IMG} images/injector-java
+
+# Build the Node.js agent image
+.PHONY: container-injector-nodejs
+container-injector-nodejs:
+	docker build --load -t ${INJECTOR_NODEJS_IMG} images/injector-nodejs
+
+# Build the Python agent image (glibc + musl)
+.PHONY: container-injector-python
+container-injector-python:
+	docker build --load -t ${INJECTOR_PYTHON_IMG} images/injector-python
+
+# Build the .NET agent image (glibc + musl)
+.PHONY: container-injector-dotnet
+container-injector-dotnet:
+	docker build --load -t ${INJECTOR_DOTNET_IMG} images/injector-dotnet
+
+# Build all injector images
+.PHONY: container-injector-all
+container-injector-all: container-injector container-injector-java container-injector-nodejs container-injector-python container-injector-dotnet
+
+# Load all injector images into the kind cluster
+.PHONY: load-image-injector-all
+load-image-injector-all: container-injector-all kind
+	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_IMG}
+	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_JAVA_IMG}
+	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_NODEJS_IMG}
+	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_PYTHON_IMG}
+	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_DOTNET_IMG}
 
 ##@ Kind Cluster
 # Start kind cluster for local development

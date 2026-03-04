@@ -946,6 +946,107 @@ func countEnv(envs []corev1.EnvVar, name string) int {
 	return n
 }
 
+func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
+	javaImg := "java-agent:latest"
+	nodejsImg := "nodejs-agent:latest"
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{
+				Image:  "composite-sdk:latest",
+				Java:   &v2alpha1.LanguageInjectorSpec{Image: javaImg},
+				NodeJS: &v2alpha1.LanguageInjectorSpec{Image: nodejsImg},
+			},
+			Rules: []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// Composite + java + nodejs = 3 init containers, in that order.
+	require.Len(t, result.Spec.InitContainers, 3)
+	assert.Equal(t, initContainerName, result.Spec.InitContainers[0].Name)
+	assert.Equal(t, "composite-sdk:latest", result.Spec.InitContainers[0].Image)
+	assert.Equal(t, initContainerName+"-java", result.Spec.InitContainers[1].Name)
+	assert.Equal(t, javaImg, result.Spec.InitContainers[1].Image)
+	assert.Equal(t, initContainerName+"-nodejs", result.Spec.InitContainers[2].Name)
+	assert.Equal(t, nodejsImg, result.Spec.InitContainers[2].Image)
+
+	// All init containers use the same command and volume mount.
+	for _, ic := range result.Spec.InitContainers {
+		assert.Equal(t, []string{"cp", "-r", "/autoinstrumentation/.", mountPath}, ic.Command)
+		require.Len(t, ic.VolumeMounts, 1)
+		assert.Equal(t, volumeName, ic.VolumeMounts[0].Name)
+	}
+
+	// Lang path env vars are injected into the app container.
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, jvmAgentPath, envMap[envJVMAgentPath])
+	assert.Equal(t, nodejsAgentPath, envMap[envNodejsAgentPath])
+	// python/dotnet not configured — should not be set.
+	assert.Empty(t, envMap[envPythonAgentPath])
+	assert.Empty(t, envMap[envDotnetAgentPath])
+}
+
+func TestInjectPod_PerLanguageEnvVarUserOverride(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{
+				Image: "composite-sdk:latest",
+				Java:  &v2alpha1.LanguageInjectorSpec{Image: "java-agent:latest"},
+			},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "catch-all",
+					Config: v2alpha1.RuleConfig{
+						// User provides a custom agent path — should win over operator default.
+						Env: []corev1.EnvVar{
+							{Name: envJVMAgentPath, Value: "/custom/javaagent.jar"},
+						},
+					},
+				},
+			},
+		},
+	}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	// User-provided path wins.
+	assert.Equal(t, "/custom/javaagent.jar", envMap[envJVMAgentPath])
+}
+
+func TestInjectPod_NoPerLanguageImages_NoLangEnvVars(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "composite-sdk:latest"},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// Only the composite init container — no per-language containers.
+	require.Len(t, result.Spec.InitContainers, 1)
+
+	// No per-language env vars — otelinject.conf defaults apply.
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Empty(t, envMap[envJVMAgentPath])
+	assert.Empty(t, envMap[envNodejsAgentPath])
+	assert.Empty(t, envMap[envPythonAgentPath])
+	assert.Empty(t, envMap[envDotnetAgentPath])
+}
+
 func mustInjectPod(t *testing.T, inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {
 	t.Helper()
 	result, err := injectPod(inst, pod, namespace)
