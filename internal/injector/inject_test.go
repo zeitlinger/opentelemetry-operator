@@ -416,13 +416,36 @@ func TestDeriveServiceName_FallbackToPodName(t *testing.T) {
 	assert.Equal(t, "standalone-pod", deriveServiceName(pod))
 }
 
-func TestDeriveServiceName_FallbackToGenerateName(t *testing.T) {
+func TestDeriveServiceName_NoPodName(t *testing.T) {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "job-runner-",
 		},
 	}
-	assert.Equal(t, "job-runner-", deriveServiceName(pod))
+	// No owner refs, no pod name → empty; buildEnvVars falls back to container name.
+	assert.Equal(t, "", deriveServiceName(pod))
+}
+
+func TestServiceNameFallsBackToContainerName(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+
+	// Pod with no owner refs and no name — service name should fall back to container name.
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{GenerateName: "runner-"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "worker"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	svcName := findEnv(result.Spec.Containers[0].Env, envInjectorServiceName)
+	require.NotNil(t, svcName)
+	assert.Equal(t, "worker", svcName.Value)
 }
 
 func TestInjectPod_EmptyRuleConfig(t *testing.T) {

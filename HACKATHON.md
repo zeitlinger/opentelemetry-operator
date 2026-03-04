@@ -186,8 +186,8 @@ Reviewed all env vars injected by v1alpha1 (`internal/instrumentation/sdk.go`) v
 - TLS certs (`OTEL_EXPORTER_OTLP_CERTIFICATE` etc.) — user provides in env; volume mounts for cert files not yet supported (see known gaps above)
 
 **Resolved gaps:**
-- `k8s.deployment.name` — derived from ReplicaSet name using hash-strip heuristic (same as beyla/deriveServiceName)
-- `k8s.cronjob.name` — derived from Job name using hash-strip heuristic (same as beyla)
+- `k8s.deployment.name` — derived from ReplicaSet name using hash-strip heuristic (same as deriveServiceName)
+- `k8s.cronjob.name` — derived from Job name using hash-strip heuristic
 
 **Not porting (intentional):**
 - Annotation-based resource attributes (`resource.opentelemetry.io/*`) — v1alpha1 workaround for limited config model. v2alpha1 users set these via `config.env` on rules, which is more explicit and auditable.

@@ -235,7 +235,8 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 			},
 		},
 		corev1.EnvVar{Name: envInjectorK8sContainerName, Value: containerName},
-		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceName},
+		// Container name is the last fallback per semconv spec.
+		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceNameWithFallback(serviceName, containerName)},
 		corev1.EnvVar{Name: envInjectorServiceNamespace, Value: namespace},
 		corev1.EnvVar{Name: envInjectorResourceAttributes, Value: buildInjectorResourceAttrs(containerName, ownerRefs)},
 	)
@@ -256,9 +257,14 @@ func buildInjectorResourceAttrs(containerName string, ownerRefs []metav1.OwnerRe
 	// k8s.node.name from downward API
 	attrs = append(attrs, fmt.Sprintf("k8s.node.name=$(%s)", envNodeName))
 
-	// Owner ref resource attributes (k8s.deployment.name, k8s.replicaset.name, etc.)
-	// For ReplicaSet and Job, also derive the parent (Deployment/CronJob) using the
-	// same hash-strip heuristic as beyla and deriveServiceName.
+	// Owner ref resource attributes (k8s.replicaset.name, k8s.statefulset.name, etc.)
+	//
+	// For ReplicaSet and Job, we also derive the parent name (Deployment/CronJob) by
+	// stripping the trailing hash suffix (e.g. "myapp-abc123" → "myapp"). This avoids
+	// an API call to look up the ReplicaSet's owner during webhook admission.
+	// v1alpha1 does a real API lookup with retry (sdkInjector.addParentResourceLabels),
+	// but that adds latency to pod creation. The heuristic covers the standard case
+	// where K8s appends a hyphen + hash to the parent name.
 	for _, owner := range ownerRefs {
 		if attr := ownerKindToResourceAttribute(owner.Kind); attr != "" {
 			attrs = append(attrs, fmt.Sprintf("%s=%s", attr, owner.Name))
@@ -297,8 +303,18 @@ func ownerKindToResourceAttribute(kind string) string {
 	}
 }
 
-// deriveServiceName gets the service name from owner references.
-// For ReplicaSets owned by Deployments, strips the hash suffix to get the Deployment name.
+// deriveServiceName determines service.name following the OTel semconv K8s attribute spec:
+// https://opentelemetry.io/docs/specs/semconv/non-normative/k8s-attributes/#how-servicename-should-be-calculated
+//
+// Precedence (first match wins):
+//  1. k8s.deployment.name (derived from ReplicaSet owner by stripping hash suffix)
+//  2. k8s.replicaset.name
+//  3. k8s.statefulset.name
+//  4. k8s.daemonset.name
+//  5. k8s.cronjob.name (not reachable — pods don't have CronJob as direct owner)
+//  6. k8s.job.name
+//  7. k8s.pod.name
+//  8. k8s.container.name (applied per-container in buildEnvVars, not here)
 func deriveServiceName(pod corev1.Pod) string {
 	for _, owner := range pod.OwnerReferences {
 		switch owner.Kind {
@@ -312,10 +328,7 @@ func deriveServiceName(pod corev1.Pod) string {
 			return owner.Name
 		}
 	}
-	if pod.Name != "" {
-		return pod.Name
-	}
-	return pod.GenerateName
+	return pod.Name
 }
 
 func hasEnv(envs []corev1.EnvVar, name string) bool {
@@ -325,6 +338,13 @@ func hasEnv(envs []corev1.EnvVar, name string) bool {
 		}
 	}
 	return false
+}
+
+func serviceNameWithFallback(serviceName, containerName string) string {
+	if serviceName != "" {
+		return serviceName
+	}
+	return containerName
 }
 
 // appendIfNotSet adds the env var only if no env var with the same name is already present.
