@@ -316,7 +316,8 @@ kind delete cluster --name otel-operator-dev
 - [ ] **Per-language image override init containers** — see task details below
 - [ ] **Status subresource** — add `InstrumentationStatus` with conditions and rule match info
 - [ ] **Validation webhook** — see task details below
-- [ ] **Image volumes** — separate work package (Johanna), K8s 1.31+ image volumes replace init container + emptyDir
+- [ ] **Image volumes** — separate work package (Johanna), K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
+- [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
 
 ## Task details
 
