@@ -1,0 +1,212 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
+package injector
+
+import (
+	"strings"
+
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/open-telemetry/opentelemetry-operator/apis/v2alpha1"
+)
+
+const (
+	initContainerName = "otel-injector-init"
+	volumeName        = "otel-injector"
+	mountPath         = "/otel"
+	ldPreloadPath     = "/otel/libotelinject.so"
+	configFilePath    = "/otel/injector/otelinject.conf"
+
+	envLDPreload                = "LD_PRELOAD"
+	envInjectorConfigFile       = "OTEL_INJECTOR_CONFIG_FILE"
+	envOTLPProtocol             = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envInjectorK8sNamespace     = "OTEL_INJECTOR_K8S_NAMESPACE_NAME"
+	envInjectorK8sPodName       = "OTEL_INJECTOR_K8S_POD_NAME"
+	envInjectorK8sPodUID        = "OTEL_INJECTOR_K8S_POD_UID"
+	envInjectorK8sContainerName = "OTEL_INJECTOR_K8S_CONTAINER_NAME"
+	envInjectorServiceName      = "OTEL_INJECTOR_SERVICE_NAME"
+	envInjectorServiceNamespace = "OTEL_INJECTOR_SERVICE_NAMESPACE"
+)
+
+func isAlreadyInjected(pod corev1.Pod) bool {
+	for _, c := range pod.Spec.InitContainers {
+		if c.Name == initContainerName {
+			return true
+		}
+	}
+	for _, c := range pod.Spec.Containers {
+		for _, e := range c.Env {
+			if e.Name == envLDPreload {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {
+	// Add volume
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
+		},
+	})
+
+	// Add init container
+	pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
+		Name:    initContainerName,
+		Image:   inst.Spec.Injector.Image,
+		Command: []string{"cp", "-r", "/autoinstrumentation/.", mountPath},
+		VolumeMounts: []corev1.VolumeMount{{
+			Name:      volumeName,
+			MountPath: mountPath,
+		}},
+	})
+
+	serviceName := deriveServiceName(pod)
+
+	// Inject env vars into each app container based on matching rules.
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+
+		// Skip containers that already have LD_PRELOAD
+		if hasEnv(c.Env, envLDPreload) {
+			continue
+		}
+
+		rule := matchRule(inst.Spec.Rules, namespace, pod.Labels, c.Name)
+		if rule == nil {
+			continue
+		}
+
+		// Disabled rule = explicit opt-out for this container.
+		if rule.Config.Disabled {
+			continue
+		}
+
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name:      volumeName,
+			MountPath: mountPath,
+		})
+
+		envVars := buildEnvVars(rule, c.Name, serviceName, namespace)
+		c.Env = append(c.Env, envVars...)
+	}
+
+	return pod
+}
+
+// matchRule returns the first matching rule for the given container, or nil.
+func matchRule(rules []v2alpha1.Rule, namespace string, podLabels map[string]string, containerName string) *v2alpha1.Rule {
+	for i := range rules {
+		r := &rules[i]
+		if matchesNamespace(r.Selector, namespace) &&
+			matchesPodLabels(r.Selector, podLabels) &&
+			matchesContainerName(r.Selector, containerName) {
+			return r
+		}
+	}
+	return nil
+}
+
+// matchesNamespace returns true if the selector's namespace list is empty or contains the given namespace.
+func matchesNamespace(sel v2alpha1.RuleSelector, namespace string) bool {
+	if len(sel.Namespaces) == 0 {
+		return true
+	}
+	for _, ns := range sel.Namespaces {
+		if ns == namespace {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesPodLabels returns true if the pod has all labels specified in the selector (AND semantics).
+func matchesPodLabels(sel v2alpha1.RuleSelector, podLabels map[string]string) bool {
+	for k, v := range sel.PodLabels {
+		if podLabels[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// matchesContainerName returns true if the selector's container list is empty or contains the name.
+func matchesContainerName(sel v2alpha1.RuleSelector, name string) bool {
+	if len(sel.ContainerNames) == 0 {
+		return true
+	}
+	for _, cn := range sel.ContainerNames {
+		if cn == name {
+			return true
+		}
+	}
+	return false
+}
+
+func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string) []corev1.EnvVar {
+	envs := []corev1.EnvVar{
+		{Name: envLDPreload, Value: ldPreloadPath},
+		{Name: envInjectorConfigFile, Value: configFilePath},
+		{Name: envOTLPProtocol, Value: "http/protobuf"},
+		{
+			Name: envInjectorK8sNamespace,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
+			},
+		},
+		{
+			Name: envInjectorK8sPodName,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
+			},
+		},
+		{
+			Name: envInjectorK8sPodUID,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"},
+			},
+		},
+		{Name: envInjectorK8sContainerName, Value: containerName},
+		{Name: envInjectorServiceName, Value: serviceName},
+		{Name: envInjectorServiceNamespace, Value: namespace},
+	}
+
+	// Append rule-level env vars (supports valueFrom for secrets etc.)
+	envs = append(envs, rule.Config.Env...)
+
+	return envs
+}
+
+// deriveServiceName gets the service name from owner references.
+// For ReplicaSets owned by Deployments, strips the hash suffix to get the Deployment name.
+func deriveServiceName(pod corev1.Pod) string {
+	for _, owner := range pod.OwnerReferences {
+		switch owner.Kind {
+		case "ReplicaSet":
+			name := owner.Name
+			if idx := strings.LastIndex(name, "-"); idx > 0 {
+				return name[:idx]
+			}
+			return name
+		case "StatefulSet", "DaemonSet", "Job":
+			return owner.Name
+		}
+	}
+	if pod.Name != "" {
+		return pod.Name
+	}
+	return pod.GenerateName
+}
+
+func hasEnv(envs []corev1.EnvVar, name string) bool {
+	for _, e := range envs {
+		if e.Name == name {
+			return true
+		}
+	}
+	return false
+}

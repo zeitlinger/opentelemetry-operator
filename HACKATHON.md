@@ -6,7 +6,7 @@ Replace per-language auto-instrumentation with a single composite SDK image that
 
 ## Branch
 
-`device-plugin-prototype` on `grafana/opentelemetry-operator`
+`hackathon-16-composite-sdk-injection` on `grafana/opentelemetry-operator`
 
 ## Key files
 
@@ -17,7 +17,10 @@ Replace per-language auto-instrumentation with a single composite SDK image that
 | `apis/v2alpha1/zz_generated.deepcopy.go` | Auto-generated — do not edit |
 | `config/crd/bases/instrumentation.opentelemetry.io_instrumentations.yaml` | Generated CRD YAML — do not edit |
 | `instrumentation-v2alpha1-example.yaml` | Annotated reference example CR |
-| `main.go` | Scheme registration |
+| `internal/injector/podmutator.go` | CR lookup + PodMutator implementation |
+| `internal/injector/inject.go` | Pod mutation logic (init container, env vars) |
+| `internal/injector/inject_test.go` | Unit tests |
+| `main.go` | Scheme + mutator registration |
 
 ## After changing CRD types
 
@@ -79,20 +82,32 @@ InstrumentationSpec
 - **TLS / volume mounts** — no mechanism to mount cert files for mTLS; workaround is user-managed volumes
 - **Annotation-based opt-out** — `config.disabled: true` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
 
+## Injector webhook (PodMutator)
+
+Annotation-driven injection via `instrumentation.opentelemetry.io/inject-injector`. Uses the same pattern as v1alpha1 (pod > namespace precedence, `"true"` / `"false"` / `"name"` / `"ns/name"`).
+
+On injection, adds:
+- Init container (`otel-injector-init`) that copies composite SDK contents to an emptyDir
+- `LD_PRELOAD=/otel/libotelinject.so` on all app containers
+- OTLP endpoint, sampler, propagator, and resource attribute env vars from the CRD spec
+- Kubernetes metadata via downward API (`namespace`, `pod name`, `pod UID`)
+- Service name derived from owner references (Deployment/StatefulSet/DaemonSet/Job)
+
 ## Status
 
 ### Done
 - [x] CRD schema design (Jack + Claude)
 - [x] `apis/v2alpha1/instrumentation_types.go` — full schema implemented
 - [x] `instrumentation-v2alpha1-example.yaml` — annotated reference example
+- [x] Injector init container integration
 
 ### TODO
-- [ ] Webhook / pod mutator — core injection logic
+- [ ] Webhook / pod mutator — update to work with new rules-based schema
   - CR priority resolution (multi-CR tiebreaking)
   - Per-container rule matching (namespace ∧ pod labels ∧ container names)
   - Env var injection per container
   - Declarative config ConfigMap creation + volume mount
-  - Device resource request injection (or init container)
-- [ ] Controller / reconciler — update `internal/deviceplugin/reconciler.go` to watch v2alpha1
-- [ ] Status subresource — surface matched rule name, conflict warnings
-- [ ] Validation webhook — validate `file_format`, catch invalid declarative config early
+- [ ] Controller / reconciler
+- [ ] Status subresource
+- [ ] Validation webhook
+- [ ] Image volumes (separate work package, currently using init container + emptyDir)
