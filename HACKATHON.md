@@ -153,6 +153,14 @@ Agent paths (`jvm_auto_instrumentation_agent_path`, etc.) and default process fi
 - [x] CR priority resolution (multi-CR tiebreaking)
 - [x] Env var injection per container from `config.env`
 - [x] Disabled rule support (opt-out)
+- [x] Annotation-based triggering removed — rules selectors are the selection mechanism
+- [x] `OTEL_INJECTOR_*` env var validation (hard error on reserved prefix in user config)
+- [x] User env vars win over operator defaults (`appendIfNotSet` pattern)
+- [x] `OTEL_NODE_IP` / `OTEL_POD_IP` downward API vars (consistent with v1alpha1)
+- [x] `OTEL_INJECTOR_RESOURCE_ATTRIBUTES` with k8s metadata + service.instance.id
+- [x] `OTEL_NODE_NAME` downward API for k8s.node.name
+- [x] Owner ref resource attributes (k8s.replicaset.name, k8s.statefulset.name, etc.)
+- [x] Precedence documentation (service name + resource attributes)
 
 ### TODO
 - [ ] Declarative config ConfigMap creation + volume mount
@@ -161,6 +169,26 @@ Agent paths (`jvm_auto_instrumentation_agent_path`, etc.) and default process fi
 - [ ] Status subresource (matched rule name, conflict warnings)
 - [ ] Validation webhook
 - [ ] Image volumes (separate work package, currently using init container + emptyDir)
+
+### v1alpha1 comparison — remaining gaps
+
+Reviewed all env vars injected by v1alpha1 (`internal/instrumentation/sdk.go`) vs v2alpha1. Status:
+
+**Intentionally different (handled by injector binary at runtime):**
+- Language-specific vars (JAVA_TOOL_OPTIONS, NODE_OPTIONS, PYTHONPATH, .NET profiling) — injector binary does language detection
+- `OTEL_RESOURCE_ATTRIBUTES` — injector binary builds from `OTEL_INJECTOR_*` vars at runtime
+- `OTEL_SERVICE_NAME` — injector binary sets from `OTEL_INJECTOR_SERVICE_NAME`
+
+**Intentionally different (user sets via `config.env`):**
+- `OTEL_EXPORTER_OTLP_ENDPOINT` — no dedicated CRD field, user provides in env
+- `OTEL_PROPAGATORS` — user provides in env (v1alpha1 has `Spec.Propagators`)
+- `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` — user provides in env (v1alpha1 has `Spec.Sampler`)
+- TLS certs (`OTEL_EXPORTER_OTLP_CERTIFICATE` etc.) — user provides in env; volume mounts for cert files not yet supported (see known gaps above)
+
+**Potential gaps to investigate:**
+- `k8s.deployment.name` — not derived from ReplicaSet owner. We set `k8s.replicaset.name` but v1alpha1 also resolves the Deployment name via owner chain. Could use the same hash-strip heuristic as `deriveServiceName` or do an API lookup.
+- `k8s.cronjob.name` — v1alpha1 resolves CronJob → Job → Pod chain. We only see direct owner (Job).
+- Annotation-based resource attributes — v1alpha1 reads `resource.opentelemetry.io/*` annotations. Not supported in v2alpha1.
 
 ## Design notes: declarative config implementation
 

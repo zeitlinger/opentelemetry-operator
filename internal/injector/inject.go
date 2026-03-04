@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/open-telemetry/opentelemetry-operator/apis/v2alpha1"
 )
@@ -29,8 +30,11 @@ const (
 	envInjectorServiceName      = "OTEL_INJECTOR_SERVICE_NAME"
 	envInjectorServiceNamespace = "OTEL_INJECTOR_SERVICE_NAMESPACE"
 
-	envNodeIP = "OTEL_NODE_IP"
-	envPodIP  = "OTEL_POD_IP"
+	envNodeIP   = "OTEL_NODE_IP"
+	envPodIP    = "OTEL_POD_IP"
+	envNodeName = "OTEL_NODE_NAME"
+
+	envInjectorResourceAttributes = "OTEL_INJECTOR_RESOURCE_ATTRIBUTES"
 )
 
 func isAlreadyInjected(pod corev1.Pod) bool {
@@ -102,7 +106,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			MountPath: mountPath,
 		})
 
-		envVars := buildEnvVars(rule, c.Name, serviceName, namespace)
+		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences)
 		c.Env = append(c.Env, envVars...)
 	}
 
@@ -183,7 +187,7 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 //   - OTEL_SERVICE_NAME: SDK reads it directly, ignores resource attrs
 //   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
 //   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
-func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string) []corev1.EnvVar {
+func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference) []corev1.EnvVar {
 	// User env vars go first so they win over operator defaults (K8s uses first occurrence).
 	envs := append([]corev1.EnvVar{}, rule.Config.Env...)
 
@@ -224,12 +228,61 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"},
 			},
 		},
+		corev1.EnvVar{
+			Name: envNodeName,
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "spec.nodeName"},
+			},
+		},
 		corev1.EnvVar{Name: envInjectorK8sContainerName, Value: containerName},
 		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceName},
 		corev1.EnvVar{Name: envInjectorServiceNamespace, Value: namespace},
+		corev1.EnvVar{Name: envInjectorResourceAttributes, Value: buildInjectorResourceAttrs(containerName, ownerRefs)},
 	)
 
 	return envs
+}
+
+// buildInjectorResourceAttrs constructs the OTEL_INJECTOR_RESOURCE_ATTRIBUTES value.
+// Uses $(...) references for values only known at runtime (resolved by K8s variable expansion).
+func buildInjectorResourceAttrs(containerName string, ownerRefs []metav1.OwnerReference) string {
+	var attrs []string
+
+	// service.instance.id = namespace.podName.containerName (semconv recommendation for K8s)
+	// See https://opentelemetry.io/docs/specs/semconv/non-normative/k8s-attributes/#how-serviceinstanceid-should-be-calculated
+	attrs = append(attrs, fmt.Sprintf("service.instance.id=$(%s).$(%s).%s",
+		envInjectorK8sNamespace, envInjectorK8sPodName, containerName))
+
+	// k8s.node.name from downward API
+	attrs = append(attrs, fmt.Sprintf("k8s.node.name=$(%s)", envNodeName))
+
+	// Owner ref resource attributes (k8s.deployment.name, k8s.replicaset.name, etc.)
+	for _, owner := range ownerRefs {
+		if attr := ownerKindToResourceAttribute(owner.Kind); attr != "" {
+			attrs = append(attrs, fmt.Sprintf("%s=%s", attr, owner.Name))
+		}
+	}
+
+	return strings.Join(attrs, ",")
+}
+
+func ownerKindToResourceAttribute(kind string) string {
+	switch kind {
+	case "ReplicaSet":
+		return "k8s.replicaset.name"
+	case "Deployment":
+		return "k8s.deployment.name"
+	case "StatefulSet":
+		return "k8s.statefulset.name"
+	case "DaemonSet":
+		return "k8s.daemonset.name"
+	case "Job":
+		return "k8s.job.name"
+	case "CronJob":
+		return "k8s.cronjob.name"
+	default:
+		return ""
+	}
 }
 
 // deriveServiceName gets the service name from owner references.

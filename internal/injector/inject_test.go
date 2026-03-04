@@ -533,6 +533,71 @@ func TestInjectPod_RejectsOtelInjectorEnvVars(t *testing.T) {
 	assert.Contains(t, err.Error(), "sneaky-rule")
 }
 
+func TestInjectPod_ResourceAttributes(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "myapp-abc123-xyz",
+			Namespace: "production",
+			OwnerReferences: []metav1.OwnerReference{
+				{Kind: "ReplicaSet", Name: "myapp-abc123"},
+			},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "server"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "production")
+	envs := result.Spec.Containers[0].Env
+
+	resAttrs := findEnv(envs, envInjectorResourceAttributes)
+	require.NotNil(t, resAttrs)
+
+	// service.instance.id uses $(...) references for runtime expansion
+	assert.Contains(t, resAttrs.Value, "service.instance.id=$(OTEL_INJECTOR_K8S_NAMESPACE_NAME).$(OTEL_INJECTOR_K8S_POD_NAME).server")
+	// k8s.node.name uses $(...) reference
+	assert.Contains(t, resAttrs.Value, "k8s.node.name=$(OTEL_NODE_NAME)")
+	// Owner ref produces k8s.replicaset.name
+	assert.Contains(t, resAttrs.Value, "k8s.replicaset.name=myapp-abc123")
+
+	// Verify OTEL_NODE_NAME downward API var is set
+	nodeName := findEnv(envs, envNodeName)
+	require.NotNil(t, nodeName)
+	assert.Equal(t, "spec.nodeName", nodeName.ValueFrom.FieldRef.FieldPath)
+}
+
+func TestBuildInjectorResourceAttrs_Deployment(t *testing.T) {
+	ownerRefs := []metav1.OwnerReference{
+		{Kind: "ReplicaSet", Name: "web-abc123"},
+	}
+	attrs := buildInjectorResourceAttrs("app", ownerRefs)
+	assert.Contains(t, attrs, "k8s.replicaset.name=web-abc123")
+	assert.Contains(t, attrs, "service.instance.id=")
+	assert.NotContains(t, attrs, "k8s.deployment.name")
+}
+
+func TestBuildInjectorResourceAttrs_StatefulSet(t *testing.T) {
+	ownerRefs := []metav1.OwnerReference{
+		{Kind: "StatefulSet", Name: "redis"},
+	}
+	attrs := buildInjectorResourceAttrs("redis", ownerRefs)
+	assert.Contains(t, attrs, "k8s.statefulset.name=redis")
+}
+
+func TestBuildInjectorResourceAttrs_NoOwner(t *testing.T) {
+	attrs := buildInjectorResourceAttrs("app", nil)
+	assert.Contains(t, attrs, "service.instance.id=")
+	assert.Contains(t, attrs, "k8s.node.name=")
+	assert.NotContains(t, attrs, "k8s.replicaset.name")
+}
+
 // helpers
 
 func envToMap(envs []corev1.EnvVar) map[string]string {
