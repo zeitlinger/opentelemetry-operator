@@ -6,7 +6,6 @@ package injector
 import (
 	"context"
 	"sort"
-	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -14,10 +13,6 @@ import (
 
 	"github.com/open-telemetry/opentelemetry-operator/apis/v2alpha1"
 	"github.com/open-telemetry/opentelemetry-operator/internal/webhook/podmutation"
-)
-
-const (
-	annotationInjectInjector = "instrumentation.opentelemetry.io/inject-injector"
 )
 
 var _ podmutation.PodMutator = (*injectorPodMutator)(nil)
@@ -43,11 +38,6 @@ func (pm *injectorPodMutator) Mutate(ctx context.Context, ns corev1.Namespace, p
 		logger = logger.WithValues("generateName", pod.GenerateName)
 	}
 
-	annValue := annotationValue(ns, pod, annotationInjectInjector)
-	if len(annValue) == 0 || strings.EqualFold(annValue, "false") {
-		return pod, nil
-	}
-
 	inst := pm.selectInstrumentation(ctx, ns, pod)
 	if inst == nil {
 		logger.V(1).Info("no matching v2alpha1 Instrumentation CR for this pod")
@@ -59,8 +49,7 @@ func (pm *injectorPodMutator) Mutate(ctx context.Context, ns corev1.Namespace, p
 		return pod, nil
 	}
 
-	pod = injectPod(inst, pod, ns.Name)
-	return pod, nil
+	return injectPod(inst, pod, ns.Name)
 }
 
 // selectInstrumentation lists all Instrumentation CRs and returns the highest-priority
@@ -100,23 +89,3 @@ func hasMatchingRule(inst *v2alpha1.Instrumentation, namespace string, pod corev
 	return false
 }
 
-// annotationValue returns the effective annotation value, with pod taking precedence over namespace.
-// This mirrors the logic in internal/instrumentation/annotation.go.
-func annotationValue(ns corev1.Namespace, pod corev1.Pod, annotation string) string {
-	podAnnValue := pod.Annotations[annotation]
-	nsAnnValue := ns.Annotations[annotation]
-
-	if len(nsAnnValue) == 0 {
-		return podAnnValue
-	}
-	if len(podAnnValue) == 0 {
-		return nsAnnValue
-	}
-	if !strings.EqualFold(podAnnValue, "true") {
-		return podAnnValue
-	}
-	if strings.EqualFold(nsAnnValue, "false") {
-		return podAnnValue
-	}
-	return nsAnnValue
-}

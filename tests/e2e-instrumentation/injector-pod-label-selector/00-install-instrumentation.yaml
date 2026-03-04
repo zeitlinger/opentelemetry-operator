@@ -1,0 +1,16 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-pod-label
+spec:
+  injector:
+    image: busybox:latest
+  rules:
+    - name: frontend-only
+      selector:
+        podLabels:
+          app: frontend
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318

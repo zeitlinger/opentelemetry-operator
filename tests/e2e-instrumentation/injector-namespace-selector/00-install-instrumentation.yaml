@@ -1,0 +1,16 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-ns-selector
+spec:
+  injector:
+    image: busybox:latest
+  rules:
+    - name: prod-only
+      selector:
+        namespaces:
+          - production
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: frontend
+spec:
+  containers:
+    - name: myapp
+      env:
+        - name: LD_PRELOAD
+          value: /otel/libotelinject.so
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector:4318
+        - name: OTEL_INJECTOR_SERVICE_NAME
+          value: frontend-app
+      volumeMounts:
+        - name: otel-injector
+          mountPath: /otel
+  initContainers:
+    - name: otel-injector-init
+status:
+  phase: Running

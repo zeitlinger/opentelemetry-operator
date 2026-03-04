@@ -4,6 +4,7 @@
 package injector
 
 import (
+	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -45,7 +46,14 @@ func isAlreadyInjected(pod corev1.Pod) bool {
 	return false
 }
 
-func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {
+func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) (corev1.Pod, error) {
+	// Validate all rules up front before mutating the pod.
+	for _, rule := range inst.Spec.Rules {
+		if err := validateRuleEnv(rule); err != nil {
+			return pod, err
+		}
+	}
+
 	// Add volume
 	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 		Name: volumeName,
@@ -95,7 +103,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 		c.Env = append(c.Env, envVars...)
 	}
 
-	return pod
+	return pod, nil
 }
 
 // matchRule returns the first matching rule for the given container, or nil.
@@ -147,11 +155,20 @@ func matchesContainerName(sel v2alpha1.RuleSelector, name string) bool {
 	return false
 }
 
+// validateRuleEnv returns an error if any env var in the rule uses the reserved OTEL_INJECTOR_ prefix.
+func validateRuleEnv(rule v2alpha1.Rule) error {
+	for _, e := range rule.Config.Env {
+		if strings.HasPrefix(e.Name, "OTEL_INJECTOR_") {
+			return fmt.Errorf("rule %q: env var %q uses reserved OTEL_INJECTOR_ prefix", rule.Name, e.Name)
+		}
+	}
+	return nil
+}
+
 func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string) []corev1.EnvVar {
 	envs := []corev1.EnvVar{
 		{Name: envLDPreload, Value: ldPreloadPath},
 		{Name: envInjectorConfigFile, Value: configFilePath},
-		{Name: envOTLPProtocol, Value: "http/protobuf"},
 		{
 			Name: envInjectorK8sNamespace,
 			ValueFrom: &corev1.EnvVarSource{
@@ -175,7 +192,11 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 		{Name: envInjectorServiceNamespace, Value: namespace},
 	}
 
-	// Append rule-level env vars (supports valueFrom for secrets etc.)
+	// Inject OTLP protocol default only if the user hasn't set it.
+	if !hasEnv(rule.Config.Env, envOTLPProtocol) {
+		envs = append(envs, corev1.EnvVar{Name: envOTLPProtocol, Value: "http/protobuf"})
+	}
+
 	envs = append(envs, rule.Config.Env...)
 
 	return envs

@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-app
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: myapp
+          image: busybox:latest
+          command: ["sleep", "3600"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-app
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: myapp
+          image: busybox:latest
+          command: ["sleep", "3600"]

@@ -48,7 +48,7 @@ func TestInjectPod_Basic(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 
 	// Init container added
 	require.Len(t, result.Spec.InitContainers, 1)
@@ -112,11 +112,11 @@ func TestInjectPod_RuleMatchesByNamespace(t *testing.T) {
 	}
 
 	// Should not match — pod is in "default", rule targets "production"
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 	assert.Empty(t, result.Spec.Containers[0].Env)
 
 	// Should match
-	result = injectPod(inst, pod, "production")
+	result = mustInjectPod(t, inst, pod, "production")
 	envMap := envToMap(result.Spec.Containers[0].Env)
 	assert.Equal(t, "prod", envMap["ENV"])
 	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
@@ -146,12 +146,12 @@ func TestInjectPod_RuleMatchesByPodLabels(t *testing.T) {
 			Containers: []corev1.Container{{Name: "app"}},
 		},
 	}
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 	assert.Empty(t, result.Spec.Containers[0].Env)
 
 	// Matching labels
 	pod.Labels = map[string]string{"app": "frontend", "version": "v1"}
-	result = injectPod(inst, pod, "default")
+	result = mustInjectPod(t, inst, pod, "default")
 	envMap := envToMap(result.Spec.Containers[0].Env)
 	assert.Equal(t, "frontend", envMap["ROLE"])
 }
@@ -183,7 +183,7 @@ func TestInjectPod_RuleMatchesByContainerName(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 
 	// "app" should NOT be injected (no matching rule)
 	assert.Empty(t, result.Spec.Containers[0].Env)
@@ -225,7 +225,7 @@ func TestInjectPod_DisabledRule(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 
 	// "app" matches catch-all → injected
 	envMap := envToMap(result.Spec.Containers[0].Env)
@@ -270,7 +270,7 @@ func TestInjectPod_FirstMatchWins(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 	envMap := envToMap(result.Spec.Containers[0].Env)
 	assert.Equal(t, "specific", envMap["MATCHED"])
 }
@@ -299,7 +299,7 @@ func TestInjectPod_SkipsContainerWithExistingLDPreload(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 
 	// First container should not get extra env vars
 	assert.Len(t, result.Spec.Containers[0].Env, 1)
@@ -332,7 +332,7 @@ func TestInjectPod_NoMatchingRules(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 	// No matching rule → container should not be touched
 	assert.Empty(t, result.Spec.Containers[0].Env)
 	assert.Empty(t, result.Spec.Containers[0].VolumeMounts)
@@ -440,7 +440,7 @@ func TestInjectPod_EmptyRuleConfig(t *testing.T) {
 		},
 	}
 
-	result := injectPod(inst, pod, "default")
+	result := mustInjectPod(t, inst, pod, "default")
 	envMap := envToMap(result.Spec.Containers[0].Env)
 
 	// Core env vars should always be set
@@ -449,52 +449,85 @@ func TestInjectPod_EmptyRuleConfig(t *testing.T) {
 	assert.Equal(t, "http/protobuf", envMap[envOTLPProtocol])
 }
 
-func TestAnnotationValue(t *testing.T) {
-	tests := []struct {
-		name     string
-		nsAnn    map[string]string
-		podAnn   map[string]string
-		expected string
-	}{
-		{
-			name:     "pod annotation only",
-			podAnn:   map[string]string{annotationInjectInjector: "true"},
-			expected: "true",
-		},
-		{
-			name:     "namespace annotation only",
-			nsAnn:    map[string]string{annotationInjectInjector: "my-inst"},
-			expected: "my-inst",
-		},
-		{
-			name:     "pod overrides namespace with instance name",
-			nsAnn:    map[string]string{annotationInjectInjector: "true"},
-			podAnn:   map[string]string{annotationInjectInjector: "my-inst"},
-			expected: "my-inst",
-		},
-		{
-			name:     "pod false overrides namespace",
-			nsAnn:    map[string]string{annotationInjectInjector: "true"},
-			podAnn:   map[string]string{annotationInjectInjector: "false"},
-			expected: "false",
-		},
-		{
-			name:     "both empty",
-			expected: "",
+func TestInjectPod_OTLPProtocolDefault(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ns := corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{Annotations: tt.nsAnn},
-			}
-			pod := corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Annotations: tt.podAnn},
-			}
-			assert.Equal(t, tt.expected, annotationValue(ns, pod, annotationInjectInjector))
-		})
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
 	}
+
+	// Default: OTLP protocol is injected as http/protobuf
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, "http/protobuf", envMap[envOTLPProtocol])
+}
+
+func TestInjectPod_OTLPProtocolUserOverride(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "grpc-rule",
+					Config: v2alpha1.RuleConfig{
+						Env: []corev1.EnvVar{
+							{Name: envOTLPProtocol, Value: "grpc"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, "grpc", envMap[envOTLPProtocol])
+}
+
+func TestInjectPod_RejectsOtelInjectorEnvVars(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "sneaky-rule",
+					Config: v2alpha1.RuleConfig{
+						Env: []corev1.EnvVar{
+							{Name: "OTEL_INJECTOR_SERVICE_NAME", Value: "hacked"},
+							{Name: "OTEL_TRACES_SAMPLER", Value: "always_on"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	_, err := injectPod(inst, pod, "default")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OTEL_INJECTOR_SERVICE_NAME")
+	assert.Contains(t, err.Error(), "sneaky-rule")
 }
 
 // helpers
@@ -516,4 +549,11 @@ func findEnv(envs []corev1.EnvVar, name string) *corev1.EnvVar {
 		}
 	}
 	return nil
+}
+
+func mustInjectPod(t *testing.T, inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {
+	t.Helper()
+	result, err := injectPod(inst, pod, namespace)
+	require.NoError(t, err)
+	return result
 }

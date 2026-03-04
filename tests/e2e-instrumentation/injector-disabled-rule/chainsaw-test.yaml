@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: injector-disabled-rule
+spec:
+  steps:
+    - name: step-00
+      try:
+        - apply:
+            file: 00-install-instrumentation.yaml
+      cleanup:
+        - delete:
+            ref:
+              apiVersion: opentelemetry.io/v2alpha1
+              kind: Instrumentation
+              name: injector-disabled-rule
+    - name: step-01
+      try:
+        - apply:
+            file: 01-install-app.yaml
+        - assert:
+            file: 01-assert.yaml
+      catch:
+        - podLogs:
+            selector: app=my-app
+    - name: Verify sidecar container was not injected
+      try:
+        - script:
+            content: |
+              #!/bin/bash
+              set -e
+              sidecar_env=$(kubectl get pod -n ${NAMESPACE} -l app=my-app \
+                -o jsonpath='{.items[0].spec.containers[?(@.name=="sidecar")].env[*].name}')
+              if echo "$sidecar_env" | grep -q "LD_PRELOAD"; then
+                echo "FAIL: sidecar container has LD_PRELOAD but should not"
+                exit 1
+              fi
+              echo "OK: sidecar container was correctly skipped"
