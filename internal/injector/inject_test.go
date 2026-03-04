@@ -495,8 +495,11 @@ func TestInjectPod_OTLPProtocolUserOverride(t *testing.T) {
 	}
 
 	result := mustInjectPod(t, inst, pod, "default")
-	envMap := envToMap(result.Spec.Containers[0].Env)
-	assert.Equal(t, "grpc", envMap[envOTLPProtocol])
+
+	// User's value must win and there must be no duplicate.
+	envs := result.Spec.Containers[0].Env
+	assert.Equal(t, 1, countEnv(envs, envOTLPProtocol), "expected exactly one %s", envOTLPProtocol)
+	assert.Equal(t, "grpc", findEnv(envs, envOTLPProtocol).Value)
 }
 
 func TestInjectPod_RejectsOtelInjectorEnvVars(t *testing.T) {
@@ -549,6 +552,16 @@ func findEnv(envs []corev1.EnvVar, name string) *corev1.EnvVar {
 		}
 	}
 	return nil
+}
+
+func countEnv(envs []corev1.EnvVar, name string) int {
+	n := 0
+	for _, e := range envs {
+		if e.Name == name {
+			n++
+		}
+	}
+	return n
 }
 
 func mustInjectPod(t *testing.T, inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {

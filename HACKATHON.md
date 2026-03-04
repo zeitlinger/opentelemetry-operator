@@ -93,21 +93,106 @@ On injection, adds:
 - Kubernetes metadata via downward API (`namespace`, `pod name`, `pod UID`)
 - Service name derived from owner references (Deployment/StatefulSet/DaemonSet/Job)
 
+## Otelinject settings mapping
+
+The otelinject binary (via LD_PRELOAD) reads env vars and a config file. Here's how every setting maps to the CRD.
+
+### Auto-set by operator (no user config needed)
+
+| Setting | How |
+|---|---|
+| `LD_PRELOAD` | Hardcoded `/otel/libotelinject.so` |
+| `OTEL_INJECTOR_CONFIG_FILE` | Hardcoded `/otel/injector/otelinject.conf` |
+| `OTEL_INJECTOR_K8S_NAMESPACE_NAME` | Downward API |
+| `OTEL_INJECTOR_K8S_POD_NAME` | Downward API |
+| `OTEL_INJECTOR_K8S_POD_UID` | Downward API |
+| `OTEL_INJECTOR_K8S_CONTAINER_NAME` | Container name from pod spec |
+| `OTEL_INJECTOR_SERVICE_NAME` | Derived from owner ref (Deployment/StatefulSet/etc.) |
+| `OTEL_INJECTOR_SERVICE_NAMESPACE` | Pod's namespace |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Hardcoded `http/protobuf` |
+
+### User-configured via `config.env` or `config.declarativeConfig`
+
+All other SDK and injector settings. Users set them as env vars in rules or in declarative config. No dedicated CRD fields — this is intentional (see "Config mechanisms" above).
+
+| Category | Example settings |
+|---|---|
+| SDK endpoint | `OTEL_EXPORTER_OTLP_ENDPOINT`, per-signal `_TRACES_`/`_METRICS_`/`_LOGS_` variants |
+| SDK auth | `OTEL_EXPORTER_OTLP_HEADERS` (use `valueFrom.secretKeyRef`) |
+| Sampling | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` |
+| Propagation | `OTEL_PROPAGATORS` |
+| Resources | `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME` |
+| SDK control | `OTEL_SDK_DISABLED`, `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_LOGS_EXPORTER` |
+| Injector control | `OTEL_INJECTOR_LOG_LEVEL`, `OTEL_INJECTOR_DISABLED` |
+| Injector resources | `OTEL_INJECTOR_RESOURCE_ATTRIBUTES`, `OTEL_INJECTOR_SERVICE_VERSION` |
+| Process filtering | `OTEL_INJECTOR_INCLUDE_PATHS`, `OTEL_INJECTOR_EXCLUDE_PATHS`, `_WITH_ARGUMENTS` variants |
+| Runtime control | `OTEL_INJECTOR_AUTO_INSTRUMENTATION_DISABLED` (disable specific runtimes: `jvm`, `dotnet`, etc.) |
+| Complex SDK config | Histogram buckets, views, aggregation — use `declarativeConfig` |
+
+### Not wired yet in operator
+
+| Feature | What's needed |
+|---|---|
+| `config.declarativeConfig` | Operator needs to create ConfigMap, mount as volume, set `OTEL_CONFIG_FILE` |
+| Per-language image overrides (`injector.java`, `.nodejs`, etc.) | Operator needs to run additional init containers per language |
+| Priority conflict warnings | Operator should emit warnings when multiple CRs match same pod |
+| `rules[].name` in logs/status | Surface matched rule name for debugging |
+
+### Image-level config (baked into composite image, not CRD)
+
+Agent paths (`jvm_auto_instrumentation_agent_path`, etc.) and default process filtering are baked into the composite image's `otelinject.conf`. Overridable via env vars if needed, but typically not user-facing.
+
 ## Status
 
 ### Done
 - [x] CRD schema design (Jack + Claude)
 - [x] `apis/v2alpha1/instrumentation_types.go` — full schema implemented
 - [x] `instrumentation-v2alpha1-example.yaml` — annotated reference example
-- [x] Injector init container integration
+- [x] Injector init container + LD_PRELOAD injection
+- [x] Pod mutator with rules-based matching (namespace ∧ pod labels ∧ container names)
+- [x] CR priority resolution (multi-CR tiebreaking)
+- [x] Env var injection per container from `config.env`
+- [x] Disabled rule support (opt-out)
 
 ### TODO
-- [ ] Webhook / pod mutator — update to work with new rules-based schema
-  - CR priority resolution (multi-CR tiebreaking)
-  - Per-container rule matching (namespace ∧ pod labels ∧ container names)
-  - Env var injection per container
-  - Declarative config ConfigMap creation + volume mount
+- [ ] Declarative config ConfigMap creation + volume mount
+- [ ] Per-language image override init containers
 - [ ] Controller / reconciler
-- [ ] Status subresource
+- [ ] Status subresource (matched rule name, conflict warnings)
 - [ ] Validation webhook
 - [ ] Image volumes (separate work package, currently using init container + emptyDir)
+
+## Design notes: declarative config implementation
+
+### Problem
+
+The pod mutator runs in the webhook path — it can mutate pods but can't easily manage cluster resources like ConfigMaps. The existing collector pattern (controller creates ConfigMap, pod references it) doesn't directly apply because we don't have a reconciler yet for v2alpha1 Instrumentation. Also, the CR is cluster-scoped but ConfigMaps are namespace-scoped.
+
+### Option A: Controller creates ConfigMaps ahead of time
+
+A reconciler watches Instrumentation CRs and pre-creates a ConfigMap per rule that has `declarativeConfig`. The mutator references the existing ConfigMap by a deterministic name.
+
+- ConfigMap name: `otel-injector-{instName}-{ruleName}-{contentHash[:8]}`
+- Reconciler creates/updates ConfigMaps with owner references for cleanup
+- Mutator computes the same deterministic name, adds volume + mount + `OTEL_CONFIG_FILE`
+- **Namespace fan-out**: Reconciler needs to create a ConfigMap copy in every namespace the rule targets. This is the main complexity — requires watching namespaces and reacting to new namespaces matching selectors.
+
+### Option B: Embed config in env var, let injector binary handle it
+
+Serialize declarative config into an env var (e.g. `OTEL_INJECTOR_DECLARATIVE_CONFIG_BASE64`), let otelinject write it to disk at startup.
+
+- Pro: No ConfigMap lifecycle, no namespace fan-out, no controller needed
+- Con: ~1MB env var limit (shared across all vars), puts config rendering in injector binary
+
+### Option C: Mutator creates ConfigMaps inline (hackathon scope)
+
+The webhook handler has a `client.Client` that can write. Create the ConfigMap in the pod's namespace during mutation.
+
+- Deterministic naming with content hash makes re-injection idempotent
+- Label for identification: `app.kubernetes.io/managed-by: opentelemetry-operator`, `opentelemetry.io/instrumentation: {instName}`
+- Skip cleanup for now — orphaned ConfigMaps from old configs accumulate until a proper reconciler cleans them up
+- Mount as separate read-only volume (not the emptyDir used for init container)
+
+### Recommendation
+
+Option C for hackathon (works without a reconciler), migrate to Option A when building the controller. Option B is a fallback if we hit issues with webhook-side writes.

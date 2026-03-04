@@ -28,6 +28,9 @@ const (
 	envInjectorK8sContainerName = "OTEL_INJECTOR_K8S_CONTAINER_NAME"
 	envInjectorServiceName      = "OTEL_INJECTOR_SERVICE_NAME"
 	envInjectorServiceNamespace = "OTEL_INJECTOR_SERVICE_NAMESPACE"
+
+	envNodeIP = "OTEL_NODE_IP"
+	envPodIP  = "OTEL_POD_IP"
 )
 
 func isAlreadyInjected(pod corev1.Pod) bool {
@@ -165,39 +168,66 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 	return nil
 }
 
+// buildEnvVars constructs the env vars injected into each instrumented container.
+//
+// The operator sets OTEL_INJECTOR_* env vars for K8s metadata and service identity.
+// The injector binary (LD_PRELOAD) merges these into OTEL_RESOURCE_ATTRIBUTES at
+// runtime. See opentelemetry-injector/src/resource_attributes.zig for details.
+//
+// Resource attribute precedence (highest first):
+//   - OTEL_RESOURCE_ATTRIBUTES: user-set keys are always preserved
+//   - OTEL_INJECTOR_RESOURCE_ATTRIBUTES: adds keys not already present
+//   - OTEL_INJECTOR_* individual vars: adds keys not already present
+//
+// Service name precedence (highest first):
+//   - OTEL_SERVICE_NAME: SDK reads it directly, ignores resource attrs
+//   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
+//   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
 func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string) []corev1.EnvVar {
-	envs := []corev1.EnvVar{
-		{Name: envLDPreload, Value: ldPreloadPath},
-		{Name: envInjectorConfigFile, Value: configFilePath},
-		{
+	// User env vars go first so they win over operator defaults (K8s uses first occurrence).
+	envs := append([]corev1.EnvVar{}, rule.Config.Env...)
+
+	// Operator defaults — only added if the user hasn't set them.
+	appendIfNotSet(&envs, corev1.EnvVar{Name: envOTLPProtocol, Value: "http/protobuf"})
+	appendIfNotSet(&envs, corev1.EnvVar{
+		Name: envNodeIP,
+		ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.hostIP"},
+		},
+	})
+	appendIfNotSet(&envs, corev1.EnvVar{
+		Name: envPodIP,
+		ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"},
+		},
+	})
+
+	// OTEL_INJECTOR_* vars are always set (users can't set these — blocked by validation).
+	envs = append(envs,
+		corev1.EnvVar{Name: envLDPreload, Value: ldPreloadPath},
+		corev1.EnvVar{Name: envInjectorConfigFile, Value: configFilePath},
+		corev1.EnvVar{
 			Name: envInjectorK8sNamespace,
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"},
 			},
 		},
-		{
+		corev1.EnvVar{
 			Name: envInjectorK8sPodName,
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"},
 			},
 		},
-		{
+		corev1.EnvVar{
 			Name: envInjectorK8sPodUID,
 			ValueFrom: &corev1.EnvVarSource{
 				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"},
 			},
 		},
-		{Name: envInjectorK8sContainerName, Value: containerName},
-		{Name: envInjectorServiceName, Value: serviceName},
-		{Name: envInjectorServiceNamespace, Value: namespace},
-	}
-
-	// Inject OTLP protocol default only if the user hasn't set it.
-	if !hasEnv(rule.Config.Env, envOTLPProtocol) {
-		envs = append(envs, corev1.EnvVar{Name: envOTLPProtocol, Value: "http/protobuf"})
-	}
-
-	envs = append(envs, rule.Config.Env...)
+		corev1.EnvVar{Name: envInjectorK8sContainerName, Value: containerName},
+		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceName},
+		corev1.EnvVar{Name: envInjectorServiceNamespace, Value: namespace},
+	)
 
 	return envs
 }
@@ -230,4 +260,11 @@ func hasEnv(envs []corev1.EnvVar, name string) bool {
 		}
 	}
 	return false
+}
+
+// appendIfNotSet adds the env var only if no env var with the same name is already present.
+func appendIfNotSet(envs *[]corev1.EnvVar, env corev1.EnvVar) {
+	if !hasEnv(*envs, env.Name) {
+		*envs = append(*envs, env)
+	}
 }
