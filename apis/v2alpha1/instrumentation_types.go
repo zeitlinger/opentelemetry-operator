@@ -208,14 +208,26 @@ func (d *DeclarativeConfig) DeepCopy() *DeclarativeConfig {
 	return out
 }
 
+// InstrumentationStatus defines the observed state of an Instrumentation CR.
+type InstrumentationStatus struct {
+	// Conditions represent the latest available observations of the CR's state.
+	// Known condition types: "Ready".
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
 // Instrumentation is the Schema for the instrumentations API.
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Cluster,shortName=instr2
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
 type Instrumentation struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec InstrumentationSpec `json:"spec,omitempty"`
+	Spec   InstrumentationSpec   `json:"spec,omitempty"`
+	Status InstrumentationStatus `json:"status,omitempty"`
 }
 
 // InstrumentationList contains a list of Instrumentation.

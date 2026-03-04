@@ -11,6 +11,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -54,6 +55,7 @@ func NewInstrumentationReconciler(c client.Client, scheme *runtime.Scheme, log l
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations/status,verbs=get;update;patch
 
 // Reconcile manages ConfigMaps for each rule with declarativeConfig.
 func (r *InstrumentationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -91,12 +93,18 @@ func (r *InstrumentationReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	for key, cm := range desired {
 		log.V(1).Info("upserting ConfigMap", "namespace", key.Namespace, "name", key.Name)
 		if err := r.upsertConfigMap(ctx, cm); err != nil {
-			return ctrl.Result{}, fmt.Errorf("upserting ConfigMap %s/%s: %w", key.Namespace, key.Name, err)
+			upsertErr := fmt.Errorf("upserting ConfigMap %s/%s: %w", key.Namespace, key.Name, err)
+			_ = r.setStatus(ctx, &inst, "ReconcileError", metav1.ConditionFalse, upsertErr.Error())
+			return ctrl.Result{}, upsertErr
 		}
 	}
 
 	// Prune stale ConfigMaps no longer desired.
 	if err := r.pruneStaleConfigMaps(ctx, log, &inst, desired); err != nil {
+		return ctrl.Result{}, r.setStatus(ctx, &inst, "ReconcileError", metav1.ConditionFalse, err.Error())
+	}
+
+	if err := r.setStatus(ctx, &inst, "Reconciled", metav1.ConditionTrue, fmt.Sprintf("%d rules, %d ConfigMaps", len(inst.Spec.Rules), len(desired))); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -273,6 +281,18 @@ func (r *InstrumentationReconciler) deleteAllConfigMaps(ctx context.Context, ins
 		labelManagedBy:       labelManagedByValue,
 		labelInstrumentation: instName,
 	})
+}
+
+// setStatus updates the Ready condition on the Instrumentation CR.
+func (r *InstrumentationReconciler) setStatus(ctx context.Context, inst *v2alpha1.Instrumentation, reason string, status metav1.ConditionStatus, message string) error {
+	meta.SetStatusCondition(&inst.Status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             status,
+		ObservedGeneration: inst.Generation,
+		Reason:             reason,
+		Message:            message,
+	})
+	return r.Status().Update(ctx, inst)
 }
 
 // needsFinalizer returns true if any rule has declarativeConfig.

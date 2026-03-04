@@ -27,6 +27,7 @@ func newReconciler(objs ...client.Object) (*InstrumentationReconciler, client.Cl
 	cli := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
+		WithStatusSubresource(&v2alpha1.Instrumentation{}).
 		Build()
 
 	r := NewInstrumentationReconciler(cli, s, logr.Discard())
