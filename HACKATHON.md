@@ -333,7 +333,7 @@ kind delete cluster --name otel-operator-dev
 - [ ] **Per-language image override init containers** — see task details below
 - [ ] **SDK path env var overrides** — use env vars to override hardcoded paths in injector config, so existing operator images work without restructuring
 - [ ] **Status subresource** — add `InstrumentationStatus` with conditions and rule match info
-- [ ] **Validation webhook** — see task details below
+- [x] **Validation webhook** — `apis/v2alpha1/instrumentation_webhook.go` validates: empty image, duplicate names, reserved env vars, DNS rule names, declarativeConfig requires name, disabled+declarativeConfig conflict
 - [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
 - [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard

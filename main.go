@@ -436,6 +436,10 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Instrumentation")
 			os.Exit(1)
 		}
+		if err = otelv2alpha1.SetupInstrumentationWebhook(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "Instrumentation v2alpha1")
+			os.Exit(1)
+		}
 		decoder := admission.NewDecoder(mgr.GetScheme())
 		mgr.GetWebhookServer().Register("/mutate-v1-pod", &webhook.Admission{
 			Handler: podmutation.NewWebhookHandler(cfg, ctrl.Log.WithName("pod-webhook"), decoder, mgr.GetClient(),

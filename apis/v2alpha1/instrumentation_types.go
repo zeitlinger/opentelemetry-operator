@@ -5,7 +5,6 @@ package v2alpha1
 
 import (
 	"encoding/json"
-	"maps"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -169,9 +168,33 @@ func (d *DeclarativeConfig) MarshalJSON() ([]byte, error) {
 func (d *DeclarativeConfig) DeepCopyInto(out *DeclarativeConfig) {
 	*out = *d
 	if d.Object != nil {
-		in, out := &d.Object, &out.Object
-		*out = make(map[string]any, len(*in))
-		maps.Copy(*out, *in)
+		out.Object = deepCopyMap(d.Object)
+	}
+}
+
+// deepCopyMap recursively deep-copies a map[string]any, handling nested maps
+// and slices that are common in OTel declarative config documents.
+func deepCopyMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = deepCopyValue(v)
+	}
+	return out
+}
+
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCopyMap(val)
+	case []any:
+		cp := make([]any, len(val))
+		for i, item := range val {
+			cp[i] = deepCopyValue(item)
+		}
+		return cp
+	default:
+		// Primitive types (string, float64, bool, nil) are safe to copy by value.
+		return val
 	}
 }
 

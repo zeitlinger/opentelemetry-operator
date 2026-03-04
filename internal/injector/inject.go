@@ -74,28 +74,10 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 		}
 	}
 
-	// Add volume
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name: volumeName,
-		VolumeSource: corev1.VolumeSource{
-			EmptyDir: &corev1.EmptyDirVolumeSource{},
-		},
-	})
-
-	// Add init container
-	pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
-		Name:    initContainerName,
-		Image:   inst.Spec.Injector.Image,
-		Command: []string{"cp", "-r", "/autoinstrumentation/.", mountPath},
-		VolumeMounts: []corev1.VolumeMount{{
-			Name:      volumeName,
-			MountPath: mountPath,
-		}},
-	})
-
 	// Track which config volumes have been added to avoid duplicates when
 	// multiple containers match the same rule.
 	addedConfigVolumes := map[string]bool{}
+	injectedAny := false
 
 	serviceName := deriveServiceName(pod)
 
@@ -116,6 +98,26 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 		// Disabled rule = explicit opt-out for this container.
 		if rule.Config.Disabled {
 			continue
+		}
+
+		// Add the shared volume + init container on first match.
+		if !injectedAny {
+			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				},
+			})
+			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
+				Name:    initContainerName,
+				Image:   inst.Spec.Injector.Image,
+				Command: []string{"cp", "-r", "/autoinstrumentation/.", mountPath},
+				VolumeMounts: []corev1.VolumeMount{{
+					Name:      volumeName,
+					MountPath: mountPath,
+				}},
+			})
+			injectedAny = true
 		}
 
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
@@ -181,10 +183,11 @@ func matchRule(rules []v2alpha1.Rule, namespace string, podLabels map[string]str
 	return nil
 }
 
-// matchesNamespace returns true if the selector's namespace list is empty or contains the given namespace.
+// matchesNamespace returns true if the selector's namespace list contains the given namespace,
+// or is empty (catch-all). Catch-all rules skip Kubernetes system namespaces (kube-*).
 func matchesNamespace(sel v2alpha1.RuleSelector, namespace string) bool {
 	if len(sel.Namespaces) == 0 {
-		return true
+		return !isSystemNamespace(namespace)
 	}
 	return slices.Contains(sel.Namespaces, namespace)
 }

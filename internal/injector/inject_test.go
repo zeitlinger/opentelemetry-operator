@@ -114,6 +114,7 @@ func TestInjectPod_RuleMatchesByNamespace(t *testing.T) {
 	// Should not match — pod is in "default", rule targets "production"
 	result := mustInjectPod(t, inst, pod, "default")
 	assert.Empty(t, result.Spec.Containers[0].Env)
+	assert.Empty(t, result.Spec.InitContainers)
 
 	// Should match
 	result = mustInjectPod(t, inst, pod, "production")
@@ -311,6 +312,46 @@ func TestInjectPod_SkipsContainerWithExistingLDPreload(t *testing.T) {
 	assert.Len(t, result.Spec.Containers[1].VolumeMounts, 1)
 }
 
+func TestInjectPod_CatchAllSkipsSystemNamespaces(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{Name: "catch-all"}, // empty selector = catch-all
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "coredns"}},
+		},
+	}
+
+	// kube-system should be skipped by catch-all rules
+	result := mustInjectPod(t, inst, pod, "kube-system")
+	assert.Empty(t, result.Spec.Containers[0].Env)
+	assert.Empty(t, result.Spec.InitContainers)
+
+	// kube-public too
+	result = mustInjectPod(t, inst, pod, "kube-public")
+	assert.Empty(t, result.Spec.Containers[0].Env)
+	assert.Empty(t, result.Spec.InitContainers)
+
+	// Normal namespace should still match
+	result = mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
+}
+
+func TestMatchesNamespace_ExplicitSystemNamespace(t *testing.T) {
+	// If a rule explicitly lists kube-system, it should still match
+	// (the filter only applies to catch-all rules).
+	sel := v2alpha1.RuleSelector{Namespaces: []string{"kube-system"}}
+	assert.True(t, matchesNamespace(sel, "kube-system"))
+}
+
 func TestInjectPod_NoMatchingRules(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
@@ -336,6 +377,9 @@ func TestInjectPod_NoMatchingRules(t *testing.T) {
 	// No matching rule → container should not be touched
 	assert.Empty(t, result.Spec.Containers[0].Env)
 	assert.Empty(t, result.Spec.Containers[0].VolumeMounts)
+	// No init container or volume should be added when nothing matches.
+	assert.Empty(t, result.Spec.InitContainers)
+	assert.Empty(t, result.Spec.Volumes)
 }
 
 func TestIsAlreadyInjected_InitContainer(t *testing.T) {
