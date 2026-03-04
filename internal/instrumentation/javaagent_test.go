@@ -395,7 +395,7 @@ func TestInjectJavaagent(t *testing.T) {
 				containers = append(containers, &pod.Spec.InitContainers[i])
 			}
 
-			err := injectJavaagent(test.Java, &pod, containers, v1alpha1.InstrumentationSpec{})
+			err := injectJavaagent(test.Java, &pod, containers, v1alpha1.InstrumentationSpec{}, false)
 			if err != nil {
 				assert.Equal(t, test.expected, pod)
 				assert.Equal(t, test.err, err)

@@ -31,6 +31,16 @@ func isInitContainerMissing(pod corev1.Pod, containerName string) bool {
 	return true
 }
 
+// isVolumeMissing returns true if no volume with the given name exists in the pod spec.
+func isVolumeMissing(pod corev1.Pod, volumeName string) bool {
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == volumeName {
+			return false
+		}
+	}
+	return true
+}
+
 // Checks if Pod is already instrumented by checking Instrumentation InitContainer presence.
 func isAutoInstrumentationInjected(pod corev1.Pod) bool {
 	for _, cont := range pod.Spec.InitContainers {
@@ -111,6 +121,23 @@ func isInstrWithoutContainers(inst instrumentationWithContainers) int {
 	}
 
 	return 0
+}
+
+// instrImageVolume returns a volume backed by an image reference (Kubernetes >= 1.31).
+// The image is pulled once per node and mounted read-only — no init container copy needed.
+func instrImageVolume(name, imageRef string, pullPolicy corev1.PullPolicy) corev1.Volume {
+	if pullPolicy == "" {
+		pullPolicy = corev1.PullIfNotPresent
+	}
+	return corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			Image: &corev1.ImageVolumeSource{
+				Reference:  imageRef,
+				PullPolicy: pullPolicy,
+			},
+		},
+	}
 }
 
 // Return volume if defined, otherwise return emptyDir with given name and size limit.

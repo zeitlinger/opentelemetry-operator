@@ -628,7 +628,7 @@ func TestInjectDotNetSDK(t *testing.T) {
 				containers = append(containers, &pod.Spec.InitContainers[i])
 			}
 
-			err := injectDotNetSDK(test.DotNet, &pod, containers, test.runtime, v1alpha1.InstrumentationSpec{})
+			err := injectDotNetSDK(test.DotNet, &pod, containers, test.runtime, v1alpha1.InstrumentationSpec{}, false)
 			if err != nil {
 				assert.Equal(t, test.expected, pod)
 				assert.Equal(t, test.err, err)

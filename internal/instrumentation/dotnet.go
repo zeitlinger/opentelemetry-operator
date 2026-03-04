@@ -39,7 +39,7 @@ const (
 	dotNetRuntimeLinuxMusl  = "linux-musl-x64"
 )
 
-func injectDotNetSDKToContainer(dotNetSpec v1alpha1.DotNet, container *corev1.Container, runtime string) error {
+func injectDotNetSDKToContainer(dotNetSpec v1alpha1.DotNet, container *corev1.Container, runtime string, useImageVolume bool) error {
 	volume := instrVolume(dotNetSpec.VolumeClaimTemplate, dotnetVolumeName, dotNetSpec.VolumeSizeLimit)
 
 	err := validateContainerEnv(container.Env, envDotNetStartupHook, envDotNetAdditionalDeps, envDotNetSharedStore)
@@ -72,11 +72,17 @@ func injectDotNetSDKToContainer(dotNetSpec v1alpha1.DotNet, container *corev1.Co
 	return nil
 }
 
-func injectDotNetSDKToPod(dotNetSpec v1alpha1.DotNet, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec) corev1.Pod {
-	volume := instrVolume(dotNetSpec.VolumeClaimTemplate, dotnetVolumeName, dotNetSpec.VolumeSizeLimit)
-
+func injectDotNetSDKToPod(dotNetSpec v1alpha1.DotNet, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) corev1.Pod {
 	// We just inject Volumes and init containers for the first processed container.
+	if useImageVolume {
+		if isVolumeMissing(pod, dotnetVolumeName) {
+			pod.Spec.Volumes = append(pod.Spec.Volumes, instrImageVolume(dotnetVolumeName, dotNetSpec.Image, instSpec.ImagePullPolicy))
+		}
+		return pod
+	}
+
 	if isInitContainerMissing(pod, dotnetInitContainerName) {
+		volume := instrVolume(dotNetSpec.VolumeClaimTemplate, dotnetVolumeName, dotNetSpec.VolumeSizeLimit)
 		pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
 
 		initContainer := corev1.Container{
@@ -98,25 +104,33 @@ func injectDotNetSDKToPod(dotNetSpec v1alpha1.DotNet, pod corev1.Pod, firstConta
 
 // injectDotNetSDK injects .NET instrumentation into the specified containers.
 // Containers must point into the provided pod and be ordered with init containers first.
-func injectDotNetSDK(dotNetSpec v1alpha1.DotNet, pod *corev1.Pod, containers []*corev1.Container, runtime string, instSpec v1alpha1.InstrumentationSpec) error {
+func injectDotNetSDK(dotNetSpec v1alpha1.DotNet, pod *corev1.Pod, containers []*corev1.Container, runtime string, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) error {
 	for _, container := range containers {
-		if err := injectDotNetSDKToContainer(dotNetSpec, container, runtime); err != nil {
+		if err := injectDotNetSDKToContainer(dotNetSpec, container, runtime, useImageVolume); err != nil {
 			return err
 		}
 	}
 	if len(containers) > 0 {
-		*pod = injectDotNetSDKToPod(dotNetSpec, *pod, containers[0].Name, instSpec)
+		*pod = injectDotNetSDKToPod(dotNetSpec, *pod, containers[0].Name, instSpec, useImageVolume)
 	}
 	return nil
 }
 
-func injectDefaultDotNetEnvVars(container *corev1.Container, runtime string) {
+func injectDefaultDotNetEnvVars(container *corev1.Container, runtime string, useImageVolume bool) {
+	// When using image volumes the whole image filesystem is mounted, so the
+	// agent files live under /autoinstrumentation inside the mount — one level
+	// deeper than what the init container's "cp -r /autoinstrumentation/." produces.
+	base := dotnetInstrMountPath
+	if useImageVolume {
+		base = dotnetInstrMountPath + "/autoinstrumentation"
+	}
+
 	coreClrProfilerPath := ""
 	switch runtime {
 	case "", dotNetRuntimeLinuxGlibc:
-		coreClrProfilerPath = dotNetCoreClrProfilerGlibcPath
+		coreClrProfilerPath = base + "/linux-x64/OpenTelemetry.AutoInstrumentation.Native.so"
 	case dotNetRuntimeLinuxMusl:
-		coreClrProfilerPath = dotNetCoreClrProfilerMuslPath
+		coreClrProfilerPath = base + "/linux-musl-x64/OpenTelemetry.AutoInstrumentation.Native.so"
 	}
 
 	setDotNetEnvVar(container, envDotNetCoreClrEnableProfiling, dotNetCoreClrEnableProfilingEnabled, false)
@@ -125,13 +139,13 @@ func injectDefaultDotNetEnvVars(container *corev1.Container, runtime string) {
 
 	setDotNetEnvVar(container, envDotNetCoreClrProfilerPath, coreClrProfilerPath, false)
 
-	setDotNetEnvVar(container, envDotNetStartupHook, dotNetStartupHookPath, true)
+	setDotNetEnvVar(container, envDotNetStartupHook, base+"/net/OpenTelemetry.AutoInstrumentation.StartupHook.dll", true)
 
-	setDotNetEnvVar(container, envDotNetAdditionalDeps, dotNetAdditionalDepsPath, true)
+	setDotNetEnvVar(container, envDotNetAdditionalDeps, base+"/AdditionalDeps", true)
 
-	setDotNetEnvVar(container, envDotNetOTelAutoHome, dotNetOTelAutoHomePath, false)
+	setDotNetEnvVar(container, envDotNetOTelAutoHome, base, false)
 
-	setDotNetEnvVar(container, envDotNetSharedStore, dotNetSharedStorePath, true)
+	setDotNetEnvVar(container, envDotNetSharedStore, base+"/store", true)
 }
 
 // setDotNetEnvVar function sets env var to the container if not exist already.

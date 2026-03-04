@@ -285,6 +285,7 @@ func main() {
 	}
 
 	setupLog.Info("Native sidecar", "enabled", cfg.Internal.NativeSidecarSupport)
+	setupLog.Info("Image volume support", "enabled", cfg.Internal.ImageVolumeSupport)
 
 	if cfg.AnnotationsFilter != nil {
 		for _, basePattern := range cfg.AnnotationsFilter {

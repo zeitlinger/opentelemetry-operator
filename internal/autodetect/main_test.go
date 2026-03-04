@@ -415,6 +415,7 @@ type mockAutoDetect struct {
 	CollectorAvailabilityFunc       func() (collector.Availability, error)
 	OpAmpBridgeAvailabilityFunc     func() (opampbridge.Availability, error)
 	NativeSidecarSupportFunc        func() (bool, error)
+	ImageVolumeSupportFunc          func() (bool, error)
 }
 
 func (m *mockAutoDetect) OpAmpBridgeAvailablity() (opampbridge.Availability, error) {
@@ -473,6 +474,13 @@ func (m *mockAutoDetect) TargetAllocatorAvailability() (targetallocator.Availabi
 func (m *mockAutoDetect) NativeSidecarSupport() (bool, error) {
 	if m.NativeSidecarSupportFunc != nil {
 		return m.NativeSidecarSupportFunc()
+	}
+	return false, nil
+}
+
+func (m *mockAutoDetect) ImageVolumeSupport() (bool, error) {
+	if m.ImageVolumeSupportFunc != nil {
+		return m.ImageVolumeSupportFunc()
 	}
 	return false, nil
 }

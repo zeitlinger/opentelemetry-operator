@@ -50,16 +50,16 @@ func (i *sdkInjector) inject(ctx context.Context, insts languageInstrumentations
 		return pod
 	}
 	if insts.Java.Instrumentation != nil {
-		pod = i.injectJava(ctx, insts.Java, ns, pod)
+		pod = i.injectJava(ctx, insts.Java, ns, pod, cfg.Internal.ImageVolumeSupport)
 	}
 	if insts.NodeJS.Instrumentation != nil {
-		pod = i.injectNodeJS(ctx, insts.NodeJS, ns, pod)
+		pod = i.injectNodeJS(ctx, insts.NodeJS, ns, pod, cfg.Internal.ImageVolumeSupport)
 	}
 	if insts.Python.Instrumentation != nil {
-		pod = i.injectPython(ctx, insts.Python, ns, pod)
+		pod = i.injectPython(ctx, insts.Python, ns, pod, cfg.Internal.ImageVolumeSupport)
 	}
 	if insts.DotNet.Instrumentation != nil {
-		pod = i.injectDotNet(ctx, insts.DotNet, ns, pod)
+		pod = i.injectDotNet(ctx, insts.DotNet, ns, pod, cfg.Internal.ImageVolumeSupport)
 	}
 	if insts.Go.Instrumentation != nil {
 		pod = i.injectGo(ctx, insts.Go, ns, pod, cfg)
@@ -77,7 +77,7 @@ func (i *sdkInjector) inject(ctx context.Context, insts languageInstrumentations
 	return pod
 }
 
-func (i *sdkInjector) injectJava(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod) corev1.Pod {
+func (i *sdkInjector) injectJava(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod, useImageVolume bool) corev1.Pod {
 	otelinst := *inst.Instrumentation
 	i.logger.V(1).Info("injecting Java instrumentation into pod", "otelinst-namespace", otelinst.Namespace, "otelinst-name", otelinst.Name)
 
@@ -91,16 +91,18 @@ func (i *sdkInjector) injectJava(ctx context.Context, inst instrumentationWithCo
 				i.injectCommonEnvVar(otelinst, container)
 				i.injectDefaultJavaEnvVars(container, otelinst.Spec.Java)
 				pod = i.injectCommonSDKConfig(ctx, otelinst, ns, pod, container, container)
-				pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, javaInitContainerName)
+				if !useImageVolume {
+					pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, javaInitContainerName)
+				}
 			}
 		}
-		pod = injectJavaagentToPod(otelinst.Spec.Java, pod, containers[0].Name, otelinst.Spec)
+		pod = injectJavaagentToPod(otelinst.Spec.Java, pod, containers[0].Name, otelinst.Spec, useImageVolume)
 	}
 
 	return pod
 }
 
-func (i *sdkInjector) injectNodeJS(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod) corev1.Pod {
+func (i *sdkInjector) injectNodeJS(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod, useImageVolume bool) corev1.Pod {
 	otelinst := *inst.Instrumentation
 	i.logger.V(1).Info("injecting NodeJS instrumentation into pod", "otelinst-namespace", otelinst.Namespace, "otelinst-name", otelinst.Name)
 
@@ -108,23 +110,25 @@ func (i *sdkInjector) injectNodeJS(ctx context.Context, inst instrumentationWith
 
 	if len(containers) > 0 {
 		for _, container := range containers {
-			if err := injectNodeJSSDKToContainer(otelinst.Spec.NodeJS, container); err != nil {
+			if err := injectNodeJSSDKToContainer(otelinst.Spec.NodeJS, container, useImageVolume); err != nil {
 				i.logger.Info("Skipping NodeJS SDK injection", "reason", err.Error(), "container", container.Name)
 			} else {
 				i.injectCommonEnvVar(otelinst, container)
-				i.injectDefaultNodeJSEnvVars(container)
+				i.injectDefaultNodeJSEnvVars(container, useImageVolume)
 				pod = i.injectCommonSDKConfig(ctx, otelinst, ns, pod, container, container)
-				pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, nodejsInitContainerName)
+				if !useImageVolume {
+					pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, nodejsInitContainerName)
+				}
 			}
 		}
 
-		pod = injectNodeJSSDKToPod(otelinst.Spec.NodeJS, pod, containers[0].Name, otelinst.Spec)
+		pod = injectNodeJSSDKToPod(otelinst.Spec.NodeJS, pod, containers[0].Name, otelinst.Spec, useImageVolume)
 	}
 
 	return pod
 }
 
-func (i *sdkInjector) injectPython(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod) corev1.Pod {
+func (i *sdkInjector) injectPython(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod, useImageVolume bool) corev1.Pod {
 	otelinst := *inst.Instrumentation
 	i.logger.V(1).Info("injecting Python instrumentation into pod", "otelinst-namespace", otelinst.Namespace, "otelinst-name", otelinst.Name)
 
@@ -133,23 +137,25 @@ func (i *sdkInjector) injectPython(ctx context.Context, inst instrumentationWith
 
 	if len(containers) > 0 {
 		for _, container := range containers {
-			if err := injectPythonSDKToContainer(otelinst.Spec.Python, container, platform); err != nil {
+			if err := injectPythonSDKToContainer(otelinst.Spec.Python, container, platform, useImageVolume); err != nil {
 				i.logger.Info("Skipping Python SDK injection", "reason", err.Error(), "container", container.Name)
 			} else {
 				i.injectCommonEnvVar(otelinst, container)
 				i.injectDefaultPythonEnvVars(container)
 				pod = i.injectCommonSDKConfig(ctx, otelinst, ns, pod, container, container)
-				pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, pythonInitContainerName)
+				if !useImageVolume {
+					pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, pythonInitContainerName)
+				}
 			}
 		}
 
-		pod = injectPythonSDKToPod(otelinst.Spec.Python, pod, containers[0].Name, platform, otelinst.Spec)
+		pod = injectPythonSDKToPod(otelinst.Spec.Python, pod, containers[0].Name, platform, otelinst.Spec, useImageVolume)
 	}
 
 	return pod
 }
 
-func (i *sdkInjector) injectDotNet(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod) corev1.Pod {
+func (i *sdkInjector) injectDotNet(ctx context.Context, inst instrumentationWithContainers, ns corev1.Namespace, pod corev1.Pod, useImageVolume bool) corev1.Pod {
 	otelinst := *inst.Instrumentation
 	i.logger.V(1).Info("injecting DotNet instrumentation into pod", "otelinst-namespace", otelinst.Namespace, "otelinst-name", otelinst.Name)
 
@@ -158,17 +164,19 @@ func (i *sdkInjector) injectDotNet(ctx context.Context, inst instrumentationWith
 
 	if len(containers) > 0 {
 		for _, container := range containers {
-			if err := injectDotNetSDKToContainer(otelinst.Spec.DotNet, container, runtime); err != nil {
+			if err := injectDotNetSDKToContainer(otelinst.Spec.DotNet, container, runtime, useImageVolume); err != nil {
 				i.logger.Info("Skipping DotNet SDK injection", "reason", err.Error(), "container", container.Name)
 			} else {
 				i.injectCommonEnvVar(otelinst, container)
-				pod = i.injectDefaultDotNetEnvVarsWrapper(pod, container, runtime)
+				pod = i.injectDefaultDotNetEnvVarsWrapper(pod, container, runtime, useImageVolume)
 				pod = i.injectCommonSDKConfig(ctx, otelinst, ns, pod, container, container)
-				pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, dotnetInitContainerName)
+				if !useImageVolume {
+					pod = i.setInitContainerSecurityContext(pod, container.SecurityContext, dotnetInitContainerName)
+				}
 			}
 		}
 
-		pod = injectDotNetSDKToPod(otelinst.Spec.DotNet, pod, containers[0].Name, otelinst.Spec)
+		pod = injectDotNetSDKToPod(otelinst.Spec.DotNet, pod, containers[0].Name, otelinst.Spec, useImageVolume)
 	}
 
 	return pod
@@ -391,8 +399,8 @@ func (*sdkInjector) injectDefaultJavaEnvVars(container *corev1.Container, javaSp
 }
 
 // injectDefaultNodeJSEnvVars injects default environment variables for Node.js.
-func (*sdkInjector) injectDefaultNodeJSEnvVars(container *corev1.Container) {
-	envVars := getDefaultNodeJSEnvVars(container)
+func (*sdkInjector) injectDefaultNodeJSEnvVars(container *corev1.Container, useImageVolume bool) {
+	envVars := getDefaultNodeJSEnvVars(container, useImageVolume)
 	container.Env = appendOrReplace(container.Env, envVars...)
 }
 
@@ -402,8 +410,8 @@ func (*sdkInjector) injectDefaultPythonEnvVars(container *corev1.Container) {
 }
 
 // injectDefaultDotNetEnvVarsWrapper injects default environment variables for .NET.
-func (*sdkInjector) injectDefaultDotNetEnvVarsWrapper(pod corev1.Pod, container *corev1.Container, runtime string) corev1.Pod {
-	injectDefaultDotNetEnvVars(container, runtime)
+func (*sdkInjector) injectDefaultDotNetEnvVarsWrapper(pod corev1.Pod, container *corev1.Container, runtime string, useImageVolume bool) corev1.Pod {
+	injectDefaultDotNetEnvVars(container, runtime, useImageVolume)
 	return pod
 }
 

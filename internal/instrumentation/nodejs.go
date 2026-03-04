@@ -15,9 +15,12 @@ const (
 	nodejsInitContainerName = initContainerName + "-nodejs"
 	nodejsVolumeName        = volumeName + "-nodejs"
 	nodejsInstrMountPath    = "/otel-auto-instrumentation-nodejs"
+	// When using image volumes the whole image filesystem is mounted, so the
+	// agent files live under /autoinstrumentation inside the mount.
+	nodeImageVolumeRequireArgument = " --require /otel-auto-instrumentation-nodejs/autoinstrumentation/autoinstrumentation.js"
 )
 
-func injectNodeJSSDKToContainer(nodeJSSpec v1alpha1.NodeJS, container *corev1.Container) error {
+func injectNodeJSSDKToContainer(nodeJSSpec v1alpha1.NodeJS, container *corev1.Container, useImageVolume bool) error {
 	volume := instrVolume(nodeJSSpec.VolumeClaimTemplate, nodejsVolumeName, nodeJSSpec.VolumeSizeLimit)
 
 	err := validateContainerEnv(container.Env, envNodeOptions)
@@ -35,11 +38,17 @@ func injectNodeJSSDKToContainer(nodeJSSpec v1alpha1.NodeJS, container *corev1.Co
 	return nil
 }
 
-func injectNodeJSSDKToPod(nodeJSSpec v1alpha1.NodeJS, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec) corev1.Pod {
-	volume := instrVolume(nodeJSSpec.VolumeClaimTemplate, nodejsVolumeName, nodeJSSpec.VolumeSizeLimit)
-
+func injectNodeJSSDKToPod(nodeJSSpec v1alpha1.NodeJS, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) corev1.Pod {
 	// We just inject Volumes and init containers for the first processed container
+	if useImageVolume {
+		if isVolumeMissing(pod, nodejsVolumeName) {
+			pod.Spec.Volumes = append(pod.Spec.Volumes, instrImageVolume(nodejsVolumeName, nodeJSSpec.Image, instSpec.ImagePullPolicy))
+		}
+		return pod
+	}
+
 	if isInitContainerMissing(pod, nodejsInitContainerName) {
+		volume := instrVolume(nodeJSSpec.VolumeClaimTemplate, nodejsVolumeName, nodeJSSpec.VolumeSizeLimit)
 		pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
 
 		initContainer := corev1.Container{
@@ -61,25 +70,33 @@ func injectNodeJSSDKToPod(nodeJSSpec v1alpha1.NodeJS, pod corev1.Pod, firstConta
 
 // injectNodeJSSDK injects Node.js instrumentation into the specified containers.
 // Containers must point into the provided pod and be ordered with init containers first.
-func injectNodeJSSDK(nodeJSSpec v1alpha1.NodeJS, pod *corev1.Pod, containers []*corev1.Container, instSpec v1alpha1.InstrumentationSpec) error {
+func injectNodeJSSDK(nodeJSSpec v1alpha1.NodeJS, pod *corev1.Pod, containers []*corev1.Container, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) error {
 	for _, container := range containers {
-		if err := injectNodeJSSDKToContainer(nodeJSSpec, container); err != nil {
+		if err := injectNodeJSSDKToContainer(nodeJSSpec, container, useImageVolume); err != nil {
 			return err
 		}
 	}
 	if len(containers) > 0 {
-		*pod = injectNodeJSSDKToPod(nodeJSSpec, *pod, containers[0].Name, instSpec)
+		*pod = injectNodeJSSDKToPod(nodeJSSpec, *pod, containers[0].Name, instSpec, useImageVolume)
 	}
 	return nil
 }
 
-func getDefaultNodeJSEnvVars(container *corev1.Container) []corev1.EnvVar {
+func getDefaultNodeJSEnvVars(container *corev1.Container, useImageVolume bool) []corev1.EnvVar {
+	// When using image volumes the whole image filesystem is mounted, so the
+	// agent files live under /autoinstrumentation inside the mount — one level
+	// deeper than what the init container's "cp -r /autoinstrumentation/." produces.
+	requireArg := nodeRequireArgument
+	if useImageVolume {
+		requireArg = nodeImageVolumeRequireArgument
+	}
+
 	idx := getIndexOfEnv(container.Env, envNodeOptions)
 	if idx == -1 {
 		return []corev1.EnvVar{
 			{
 				Name:  envNodeOptions,
-				Value: nodeRequireArgument,
+				Value: requireArg,
 			},
 		}
 	} else if idx > -1 {
@@ -91,7 +108,7 @@ func getDefaultNodeJSEnvVars(container *corev1.Container) []corev1.EnvVar {
 		return []corev1.EnvVar{
 			{
 				Name:  envNodeOptions,
-				Value: container.Env[idx].Value + nodeRequireArgument,
+				Value: container.Env[idx].Value + requireArg,
 			},
 		}
 	}
