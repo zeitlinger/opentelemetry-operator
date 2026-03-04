@@ -257,9 +257,21 @@ func buildInjectorResourceAttrs(containerName string, ownerRefs []metav1.OwnerRe
 	attrs = append(attrs, fmt.Sprintf("k8s.node.name=$(%s)", envNodeName))
 
 	// Owner ref resource attributes (k8s.deployment.name, k8s.replicaset.name, etc.)
+	// For ReplicaSet and Job, also derive the parent (Deployment/CronJob) using the
+	// same hash-strip heuristic as beyla and deriveServiceName.
 	for _, owner := range ownerRefs {
 		if attr := ownerKindToResourceAttribute(owner.Kind); attr != "" {
 			attrs = append(attrs, fmt.Sprintf("%s=%s", attr, owner.Name))
+		}
+		if owner.Kind == "ReplicaSet" {
+			if idx := strings.LastIndex(owner.Name, "-"); idx > 0 {
+				attrs = append(attrs, fmt.Sprintf("k8s.deployment.name=%s", owner.Name[:idx]))
+			}
+		}
+		if owner.Kind == "Job" {
+			if idx := strings.LastIndex(owner.Name, "-"); idx > 0 {
+				attrs = append(attrs, fmt.Sprintf("k8s.cronjob.name=%s", owner.Name[:idx]))
+			}
 		}
 	}
 

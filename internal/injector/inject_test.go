@@ -564,8 +564,9 @@ func TestInjectPod_ResourceAttributes(t *testing.T) {
 	assert.Contains(t, resAttrs.Value, "service.instance.id=$(OTEL_INJECTOR_K8S_NAMESPACE_NAME).$(OTEL_INJECTOR_K8S_POD_NAME).server")
 	// k8s.node.name uses $(...) reference
 	assert.Contains(t, resAttrs.Value, "k8s.node.name=$(OTEL_NODE_NAME)")
-	// Owner ref produces k8s.replicaset.name
+	// Owner ref produces k8s.replicaset.name and derived k8s.deployment.name
 	assert.Contains(t, resAttrs.Value, "k8s.replicaset.name=myapp-abc123")
+	assert.Contains(t, resAttrs.Value, "k8s.deployment.name=myapp")
 
 	// Verify OTEL_NODE_NAME downward API var is set
 	nodeName := findEnv(envs, envNodeName)
@@ -579,8 +580,17 @@ func TestBuildInjectorResourceAttrs_Deployment(t *testing.T) {
 	}
 	attrs := buildInjectorResourceAttrs("app", ownerRefs)
 	assert.Contains(t, attrs, "k8s.replicaset.name=web-abc123")
+	assert.Contains(t, attrs, "k8s.deployment.name=web")
 	assert.Contains(t, attrs, "service.instance.id=")
-	assert.NotContains(t, attrs, "k8s.deployment.name")
+}
+
+func TestBuildInjectorResourceAttrs_CronJob(t *testing.T) {
+	ownerRefs := []metav1.OwnerReference{
+		{Kind: "Job", Name: "cleanup-28450380"},
+	}
+	attrs := buildInjectorResourceAttrs("worker", ownerRefs)
+	assert.Contains(t, attrs, "k8s.job.name=cleanup-28450380")
+	assert.Contains(t, attrs, "k8s.cronjob.name=cleanup")
 }
 
 func TestBuildInjectorResourceAttrs_StatefulSet(t *testing.T) {
