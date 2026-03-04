@@ -277,10 +277,19 @@ func (r *InstrumentationReconciler) pruneStaleConfigMaps(ctx context.Context, lo
 
 // deleteAllConfigMaps removes all ConfigMaps labeled for the given Instrumentation CR name.
 func (r *InstrumentationReconciler) deleteAllConfigMaps(ctx context.Context, instName string) error {
-	return r.DeleteAllOf(ctx, &corev1.ConfigMap{}, client.MatchingLabels{
+	var cmList corev1.ConfigMapList
+	if err := r.List(ctx, &cmList, client.MatchingLabels{
 		labelManagedBy:       labelManagedByValue,
 		labelInstrumentation: instName,
-	})
+	}); err != nil {
+		return err
+	}
+	for i := range cmList.Items {
+		if err := r.Delete(ctx, &cmList.Items[i]); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setStatus updates the Ready condition on the Instrumentation CR.
