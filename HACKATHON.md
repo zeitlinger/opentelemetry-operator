@@ -335,6 +335,7 @@ kind delete cluster --name otel-operator-dev
 - [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
+- [ ] **Declarative config e2e test** — full-flow chainsaw test: CR with `declarativeConfig` → reconciler creates ConfigMap → pod gets ConfigMap volume mount + `OTEL_CONFIG_FILE`. Requires inject.go webhook changes (ConfigMap volume + env var) to land first. Add to `tests/e2e-instrumentation/injector-declarative-config/`
 
 ### Future work (post-hackathon)
 
