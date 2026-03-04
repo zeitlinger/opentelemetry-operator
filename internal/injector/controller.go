@@ -54,8 +54,8 @@ func NewInstrumentationReconciler(c client.Client, scheme *runtime.Scheme, log l
 
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
-// +kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=opentelemetry.io,resources=instrumentations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=instrumentation.opentelemetry.io,resources=instrumentations,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=instrumentation.opentelemetry.io,resources=instrumentations/status,verbs=get;update;patch
 
 // Reconcile manages ConfigMaps for each rule with declarativeConfig.
 func (r *InstrumentationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

@@ -75,6 +75,10 @@ INSTRUMENTATION_APACHE_HTTPD_IMG ?= ${IMG_PREFIX}/${INSTRUMENTATION_APACHE_HTTPD
 MUSTGATHER_IMG ?= ${IMG_PREFIX}/must-gather
 
 # Injector images (images/injector-*/) — hackathon composite SDK injection
+# PLATFORM controls the target OS/arch for injector image builds.
+# Defaults to the Docker daemon's native architecture. Override if needed:
+#   PLATFORM=linux/amd64 make load-image-injector-all
+PLATFORM ?= linux/$(shell docker info --format '{{.Architecture}}' 2>/dev/null | sed 's/aarch64/arm64/;s/x86_64/amd64/')
 INJECTOR_IMG_REPO ?= injector
 INJECTOR_IMG ?= ${IMG_PREFIX}/${INJECTOR_IMG_REPO}:${VERSION}
 
@@ -591,27 +595,27 @@ container-instrumentation-all: container-instrumentation-java container-instrume
 # Build the injector binary image (libotelinject.so + otelinject.conf)
 .PHONY: container-injector
 container-injector:
-	docker build --load -t ${INJECTOR_IMG} images/injector
+	docker build --platform $(PLATFORM) --load -t ${INJECTOR_IMG} images/injector
 
 # Build the Java agent image
 .PHONY: container-injector-java
 container-injector-java:
-	docker build --load -t ${INJECTOR_JAVA_IMG} images/injector-java
+	docker build --platform $(PLATFORM) --load -t ${INJECTOR_JAVA_IMG} images/injector-java
 
 # Build the Node.js agent image
 .PHONY: container-injector-nodejs
 container-injector-nodejs:
-	docker build --load -t ${INJECTOR_NODEJS_IMG} images/injector-nodejs
+	docker build --platform $(PLATFORM) --load -t ${INJECTOR_NODEJS_IMG} images/injector-nodejs
 
 # Build the Python agent image (glibc + musl)
 .PHONY: container-injector-python
 container-injector-python:
-	docker build --load -t ${INJECTOR_PYTHON_IMG} images/injector-python
+	docker build --platform $(PLATFORM) --load -t ${INJECTOR_PYTHON_IMG} images/injector-python
 
 # Build the .NET agent image (glibc + musl)
 .PHONY: container-injector-dotnet
 container-injector-dotnet:
-	docker build --load -t ${INJECTOR_DOTNET_IMG} images/injector-dotnet
+	docker build --platform $(PLATFORM) --load -t ${INJECTOR_DOTNET_IMG} images/injector-dotnet
 
 # Build all injector images
 .PHONY: container-injector-all

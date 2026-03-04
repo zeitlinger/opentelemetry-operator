@@ -18,17 +18,18 @@ spec:
   # Omitting priority is equivalent to priority: 0.
   priority: 10
 
-  injector:
-    # image: the composite SDK image bundling all language agents + injector binary.
-    # Bumping this tag upgrades all language agents at once.
-    image: ghcr.io/example/composite-sdk:v1.2.0
+  # injector: the injector binary image (libotelinject.so + otelinject.conf).
+  # Required — without it no instrumentation occurs.
+  injector: ghcr.io/example/injector:v0.1.0
 
-    # Per-language image overrides: when set, the operator runs a dedicated init
-    # container for that language instead of relying on the composite image.
-    # Use this to upgrade or pin individual language agents independently.
-    # Unset languages continue to use the composite image.
-    java:
-      image: ghcr.io/example/java-agent:v2.11.0   # pinned ahead of composite
+  # Per-language agent images (all optional). When set, the operator runs a
+  # dedicated init container for that language that copies the agent files into
+  # the shared volume and sets the appropriate env var to tell the injector
+  # binary where the agent lives. Unset languages are not instrumented.
+  java: ghcr.io/example/injector-java:v2.11.0  # pin Java ahead of other languages
+  # nodejs: ghcr.io/example/injector-nodejs:v0.1.0
+  # python: ghcr.io/example/injector-python:v0.1.0
+  # dotnet: ghcr.io/example/injector-dotnet:v0.1.0
 
   # rules: evaluated top-to-bottom; first match wins.
   # If no rule matches, the pod receives no instrumentation (safe default).

@@ -17,9 +17,7 @@ import (
 func TestInjectPod_Basic(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{
-				Image: "ghcr.io/example/composite-sdk:latest",
-			},
+			Injector: "ghcr.io/example/otel-injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "catch-all",
@@ -53,7 +51,7 @@ func TestInjectPod_Basic(t *testing.T) {
 	// Init container added
 	require.Len(t, result.Spec.InitContainers, 1)
 	assert.Equal(t, initContainerName, result.Spec.InitContainers[0].Name)
-	assert.Equal(t, "ghcr.io/example/composite-sdk:latest", result.Spec.InitContainers[0].Image)
+	assert.Equal(t, "ghcr.io/example/otel-injector:latest", result.Spec.InitContainers[0].Image)
 	assert.Equal(t, []string{"cp", "-r", "/autoinstrumentation/.", mountPath}, result.Spec.InitContainers[0].Command)
 
 	// Volume added
@@ -89,7 +87,7 @@ func TestInjectPod_Basic(t *testing.T) {
 func TestInjectPod_RuleMatchesByNamespace(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "prod-only",
@@ -126,7 +124,7 @@ func TestInjectPod_RuleMatchesByNamespace(t *testing.T) {
 func TestInjectPod_RuleMatchesByPodLabels(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Selector: v2alpha1.RuleSelector{
@@ -160,7 +158,7 @@ func TestInjectPod_RuleMatchesByPodLabels(t *testing.T) {
 func TestInjectPod_RuleMatchesByContainerName(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Selector: v2alpha1.RuleSelector{
@@ -200,7 +198,7 @@ func TestInjectPod_RuleMatchesByContainerName(t *testing.T) {
 func TestInjectPod_DisabledRule(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "opt-out-sidecar",
@@ -240,7 +238,7 @@ func TestInjectPod_DisabledRule(t *testing.T) {
 func TestInjectPod_FirstMatchWins(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "specific",
@@ -279,7 +277,7 @@ func TestInjectPod_FirstMatchWins(t *testing.T) {
 func TestInjectPod_SkipsContainerWithExistingLDPreload(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -315,7 +313,7 @@ func TestInjectPod_SkipsContainerWithExistingLDPreload(t *testing.T) {
 func TestInjectPod_CatchAllSkipsSystemNamespaces(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{Name: "catch-all"}, // empty selector = catch-all
 			},
@@ -355,7 +353,7 @@ func TestMatchesNamespace_ExplicitSystemNamespace(t *testing.T) {
 func TestInjectPod_NoMatchingRules(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Selector: v2alpha1.RuleSelector{
@@ -473,7 +471,7 @@ func TestDeriveServiceName_NoPodName(t *testing.T) {
 func TestServiceNameFallsBackToContainerName(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -495,7 +493,7 @@ func TestServiceNameFallsBackToContainerName(t *testing.T) {
 func TestInjectPod_EmptyRuleConfig(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -519,7 +517,7 @@ func TestInjectPod_EmptyRuleConfig(t *testing.T) {
 func TestInjectPod_OTLPProtocolDefault(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -540,7 +538,7 @@ func TestInjectPod_OTLPProtocolDefault(t *testing.T) {
 func TestInjectPod_OTLPProtocolUserOverride(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "grpc-rule",
@@ -572,7 +570,7 @@ func TestInjectPod_OTLPProtocolUserOverride(t *testing.T) {
 func TestInjectPod_RejectsOtelInjectorEnvVars(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "sneaky-rule",
@@ -603,7 +601,7 @@ func TestInjectPod_RejectsOtelInjectorEnvVars(t *testing.T) {
 func TestInjectPod_ResourceAttributes(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -679,7 +677,7 @@ func TestInjectPod_DeclarativeConfig_MountsConfigMapAndSetsEnv(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "with-config",
@@ -736,7 +734,7 @@ func TestInjectPod_RejectsConfigFileEnvVars(t *testing.T) {
 		t.Run(envName, func(t *testing.T) {
 			inst := &v2alpha1.Instrumentation{
 				Spec: v2alpha1.InstrumentationSpec{
-					Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+					Injector: "injector:latest",
 					Rules: []v2alpha1.Rule{
 						{
 							Name: "bad-rule",
@@ -768,7 +766,7 @@ func TestInjectPod_RejectsConfigFileEnvVars(t *testing.T) {
 func TestInjectPod_NoDeclarativeConfig_NoConfigMount(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -797,7 +795,7 @@ func TestInjectPod_DeclarativeConfig_MultipleContainersSameRule(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "shared-config",
@@ -849,7 +847,7 @@ func TestInjectPod_DeclarativeConfig_TwoRulesDifferentContainers(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name:     "java-config",
@@ -951,12 +949,10 @@ func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
 	nodejsImg := "nodejs-agent:latest"
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{
-				Image:  "composite-sdk:latest",
-				Java:   &v2alpha1.LanguageInjectorSpec{Image: javaImg},
-				NodeJS: &v2alpha1.LanguageInjectorSpec{Image: nodejsImg},
-			},
-			Rules: []v2alpha1.Rule{{Name: "catch-all"}},
+			Injector: "injector:latest",
+			Java:     javaImg,
+			NodeJS:   nodejsImg,
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
 	pod := corev1.Pod{
@@ -969,7 +965,7 @@ func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
 	// Composite + java + nodejs = 3 init containers, in that order.
 	require.Len(t, result.Spec.InitContainers, 3)
 	assert.Equal(t, initContainerName, result.Spec.InitContainers[0].Name)
-	assert.Equal(t, "composite-sdk:latest", result.Spec.InitContainers[0].Image)
+	assert.Equal(t, "injector:latest", result.Spec.InitContainers[0].Image)
 	assert.Equal(t, initContainerName+"-java", result.Spec.InitContainers[1].Name)
 	assert.Equal(t, javaImg, result.Spec.InitContainers[1].Image)
 	assert.Equal(t, initContainerName+"-nodejs", result.Spec.InitContainers[2].Name)
@@ -994,10 +990,8 @@ func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
 func TestInjectPod_PerLanguageEnvVarUserOverride(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{
-				Image: "composite-sdk:latest",
-				Java:  &v2alpha1.LanguageInjectorSpec{Image: "java-agent:latest"},
-			},
+			Injector: "injector:latest",
+			Java:     "java-agent:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "catch-all",
@@ -1025,7 +1019,7 @@ func TestInjectPod_PerLanguageEnvVarUserOverride(t *testing.T) {
 func TestInjectPod_NoPerLanguageImages_NoLangEnvVars(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "composite-sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}

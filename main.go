@@ -382,6 +382,15 @@ func main() {
 		}
 	}
 
+	if err = injector.NewInstrumentationReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		ctrl.Log.WithName("controllers").WithName("Instrumentation"),
+	).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Instrumentation v2alpha1")
+		os.Exit(1)
+	}
+
 	if cfg.EnableWebhooks {
 		var crdMetrics *otelv1beta1.Metrics
 

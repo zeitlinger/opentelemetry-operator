@@ -95,7 +95,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 	injectedAny := false
 
 	serviceName := deriveServiceName(pod)
-	langEnvVars := buildLangEnvVars(inst.Spec.Injector)
+	langEnvVars := buildLangEnvVars(inst.Spec)
 
 	// Inject env vars into each app container based on matching rules.
 	for i := range pod.Spec.Containers {
@@ -124,20 +124,19 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 					EmptyDir: &corev1.EmptyDirVolumeSource{},
 				},
 			})
-			// Composite init container: copies the injector binary + all bundled agents.
+			// Injector init container: copies the injector binary and otelinject.conf.
 			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
 				Name:    initContainerName,
-				Image:   inst.Spec.Injector.Image,
+				Image:   inst.Spec.Injector,
 				Command: []string{"cp", "-r", "/autoinstrumentation/.", mountPath},
 				VolumeMounts: []corev1.VolumeMount{{
 					Name:      volumeName,
 					MountPath: mountPath,
 				}},
 			})
-			// Per-language init containers: each overwrites the language-specific files
-			// from its dedicated image, overriding what the composite image provided.
+			// Per-language init containers: each copies its agent files into the shared volume.
 			pod.Spec.InitContainers = append(pod.Spec.InitContainers,
-				buildLangInitContainers(inst.Spec.Injector, volumeName, mountPath)...)
+				buildLangInitContainers(inst.Spec, volumeName, mountPath)...)
 			injectedAny = true
 		}
 
@@ -260,47 +259,46 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 //   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
 //   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
 // buildLangEnvVars returns env vars that tell the injector where to find each language's agent.
-// These are set when per-language images are configured via spec.injector.{java,nodejs,python,dotnet}.
+// These are set when per-language images are configured via spec.{java,nodejs,python,dotnet}.
 // Users can override any of these in config.env — appendIfNotSet semantics apply.
-func buildLangEnvVars(inj v2alpha1.InjectorSpec) []corev1.EnvVar {
+func buildLangEnvVars(spec v2alpha1.InstrumentationSpec) []corev1.EnvVar {
 	var envs []corev1.EnvVar
-	if inj.Java != nil {
+	if spec.Java != "" {
 		envs = append(envs, corev1.EnvVar{Name: envJVMAgentPath, Value: jvmAgentPath})
 	}
-	if inj.NodeJS != nil {
+	if spec.NodeJS != "" {
 		envs = append(envs, corev1.EnvVar{Name: envNodejsAgentPath, Value: nodejsAgentPath})
 	}
-	if inj.Python != nil {
+	if spec.Python != "" {
 		envs = append(envs, corev1.EnvVar{Name: envPythonAgentPath, Value: pythonAgentPath})
 	}
-	if inj.DotNet != nil {
+	if spec.DotNet != "" {
 		envs = append(envs, corev1.EnvVar{Name: envDotnetAgentPath, Value: dotnetAgentPath})
 	}
 	return envs
 }
 
-// buildLangInitContainers returns one init container per configured per-language image override.
-// Each copies /autoinstrumentation/. to the shared volume, overwriting what the composite
-// image provided for that language.
-func buildLangInitContainers(inj v2alpha1.InjectorSpec, volName, mntPath string) []corev1.Container {
-	type langOverride struct {
-		name string
-		spec *v2alpha1.LanguageInjectorSpec
+// buildLangInitContainers returns one init container per configured language image.
+// Each copies /autoinstrumentation/. to the shared volume, adding that language's agent files.
+func buildLangInitContainers(spec v2alpha1.InstrumentationSpec, volName, mntPath string) []corev1.Container {
+	type langImage struct {
+		name  string
+		image string
 	}
-	langs := []langOverride{
-		{"java", inj.Java},
-		{"nodejs", inj.NodeJS},
-		{"python", inj.Python},
-		{"dotnet", inj.DotNet},
+	langs := []langImage{
+		{"java", spec.Java},
+		{"nodejs", spec.NodeJS},
+		{"python", spec.Python},
+		{"dotnet", spec.DotNet},
 	}
 	var containers []corev1.Container
 	for _, lang := range langs {
-		if lang.spec == nil || lang.spec.Image == "" {
+		if lang.image == "" {
 			continue
 		}
 		containers = append(containers, corev1.Container{
 			Name:    initContainerName + "-" + lang.name,
-			Image:   lang.spec.Image,
+			Image:   lang.image,
 			Command: []string{"cp", "-r", "/autoinstrumentation/.", mntPath},
 			VolumeMounts: []corev1.VolumeMount{{
 				Name:      volName,

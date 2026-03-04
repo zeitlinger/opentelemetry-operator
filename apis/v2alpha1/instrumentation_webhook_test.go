@@ -16,7 +16,7 @@ import (
 func TestValidate_ValidCR(t *testing.T) {
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{
 					Name: "catch-all",
@@ -44,13 +44,13 @@ func TestValidate_EmptyInjectorImage(t *testing.T) {
 
 	_, err := validate(inst)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.injector.image must be non-empty")
+	assert.Contains(t, err.Error(), "spec.injector must be non-empty")
 }
 
 func TestValidate_DuplicateRuleNames(t *testing.T) {
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{Name: "my-rule"},
 				{Name: "my-rule"},
@@ -66,7 +66,7 @@ func TestValidate_DuplicateRuleNames(t *testing.T) {
 func TestValidate_DuplicateEmptyNamesAllowed(t *testing.T) {
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{Selector: RuleSelector{Namespaces: []string{"a"}}},
 				{Selector: RuleSelector{Namespaces: []string{"b"}}},
@@ -93,7 +93,7 @@ func TestValidate_ReservedEnvVars(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inst := &Instrumentation{
 				Spec: InstrumentationSpec{
-					Injector: InjectorSpec{Image: "sdk:latest"},
+					Injector: "injector:latest",
 					Rules: []Rule{
 						{
 							Name: "bad",
@@ -115,7 +115,7 @@ func TestValidate_ReservedEnvVars(t *testing.T) {
 func TestValidate_DeclarativeConfigRequiresName(t *testing.T) {
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{
 					Config: RuleConfig{
@@ -151,7 +151,7 @@ func TestValidate_RuleNameDNSCompatibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inst := &Instrumentation{
 				Spec: InstrumentationSpec{
-					Injector: InjectorSpec{Image: "sdk:latest"},
+					Injector: "injector:latest",
 					Rules: []Rule{
 						{
 							Name: tt.rule,
@@ -179,7 +179,7 @@ func TestValidate_RuleNameDNSCompatibility(t *testing.T) {
 func TestValidate_DisabledWithDeclarativeConfig(t *testing.T) {
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{
 					Name: "conflicting",
@@ -221,7 +221,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	_, err := validate(inst)
 	require.Error(t, err)
 	// Should report all errors, not just the first.
-	assert.Contains(t, err.Error(), "spec.injector.image")
+	assert.Contains(t, err.Error(), "spec.injector")
 	assert.Contains(t, err.Error(), "OTEL_INJECTOR_")
 	assert.Contains(t, err.Error(), "disabled rule must not have declarativeConfig")
 }
@@ -230,7 +230,7 @@ func TestValidate_UpdateSameAsCreate(t *testing.T) {
 	inst := &Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []Rule{{Name: "ok"}},
 		},
 	}
@@ -257,7 +257,7 @@ func TestValidate_RuleNameWithoutDeclarativeConfig_SkipsDNSCheck(t *testing.T) {
 	// since they're not used for ConfigMap naming.
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{Name: "My_Fancy_Rule"},
 			},

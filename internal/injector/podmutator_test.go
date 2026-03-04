@@ -33,7 +33,7 @@ func TestSelectInstrumentation_HigherPriorityWins(t *testing.T) {
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 10,
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:low"},
+			Injector: "injector:low",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -44,7 +44,7 @@ func TestSelectInstrumentation_HigherPriorityWins(t *testing.T) {
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 100,
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:high"},
+			Injector: "injector:high",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -74,7 +74,7 @@ func TestSelectInstrumentation_OldestWinsTie(t *testing.T) {
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 50,
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:older"},
+			Injector: "injector:older",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -85,7 +85,7 @@ func TestSelectInstrumentation_OldestWinsTie(t *testing.T) {
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 50,
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:newer"},
+			Injector: "injector:newer",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -111,7 +111,7 @@ func TestSelectInstrumentation_NoMatchReturnsNil(t *testing.T) {
 	cr := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "prod-only"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "prod",
@@ -143,7 +143,7 @@ func TestSelectInstrumentation_MatchesByPodLabels(t *testing.T) {
 	cr := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "label-match"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name: "frontend",
@@ -181,7 +181,7 @@ func TestMutate_AlreadyInjectedSkips(t *testing.T) {
 	cr := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-cr"},
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}

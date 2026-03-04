@@ -57,8 +57,8 @@ func validate(inst *Instrumentation) (admission.Warnings, error) {
 	var errs []string
 
 	// 1. Injector image is required.
-	if inst.Spec.Injector.Image == "" {
-		errs = append(errs, "spec.injector.image must be non-empty")
+	if inst.Spec.Injector == "" {
+		errs = append(errs, "spec.injector must be non-empty")
 	}
 
 	// 2. Duplicate rule names.

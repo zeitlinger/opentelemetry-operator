@@ -35,33 +35,18 @@ spec:
             type: object
           spec:
             properties:
+              dotnet:
+                type: string
               injector:
-                properties:
-                  dotnet:
-                    properties:
-                      image:
-                        type: string
-                    type: object
-                  image:
-                    type: string
-                  java:
-                    properties:
-                      image:
-                        type: string
-                    type: object
-                  nodejs:
-                    properties:
-                      image:
-                        type: string
-                    type: object
-                  python:
-                    properties:
-                      image:
-                        type: string
-                    type: object
-                type: object
+                type: string
+              java:
+                type: string
+              nodejs:
+                type: string
               priority:
                 type: integer
+              python:
+                type: string
               rules:
                 items:
                   properties:

@@ -11,61 +11,47 @@ import (
 )
 
 // InstrumentationSpec defines the desired state of Instrumentation.
+//
+// Image configuration lives at the spec level (not on individual rules) because
+// agent versions are a platform-level concern: all rules in a CR share the same
+// agent versions. To use different agent versions for different environments,
+// create separate Instrumentation CRs with different priority values.
 type InstrumentationSpec struct {
 	// Priority determines which Instrumentation CR wins when multiple CRs match a pod.
 	// Higher values take precedence. Creation timestamp is used as a tiebreaker.
 	// +optional
 	Priority int `json:"priority,omitempty"`
 
-	// Injector configures the injector image and per-language agent images.
+	// Injector is the injector binary image (libotelinject.so + otelinject.conf).
+	// This image is always required; without it no instrumentation occurs.
 	// +optional
-	Injector InjectorSpec `json:"injector,omitempty"`
+	Injector string `json:"injector,omitempty"`
+
+	// Java is the Java agent image. When set, the operator runs a dedicated init
+	// container for Java instrumentation.
+	// +optional
+	Java string `json:"java,omitempty"`
+
+	// NodeJS is the Node.js agent image. When set, the operator runs a dedicated
+	// init container for Node.js instrumentation.
+	// +optional
+	NodeJS string `json:"nodejs,omitempty"`
+
+	// Python is the Python agent image. When set, the operator runs a dedicated
+	// init container for Python instrumentation.
+	// +optional
+	Python string `json:"python,omitempty"`
+
+	// DotNet is the .NET agent image. When set, the operator runs a dedicated
+	// init container for .NET instrumentation.
+	// +optional
+	DotNet string `json:"dotnet,omitempty"`
 
 	// Rules is an ordered list of instrumentation rules. Rules are evaluated
 	// sequentially per container; the first matching rule is applied. If no rule
 	// matches, no instrumentation is applied.
 	// +optional
 	Rules []Rule `json:"rules,omitempty"`
-}
-
-// InjectorSpec configures the injector and the language agent images it uses.
-// Image configuration lives here (not on individual rules) because agent versions
-// are a platform-level concern: all rules in a CR share the same agent versions.
-// To use different agent versions for different environments, create separate
-// Instrumentation CRs with different priority values.
-type InjectorSpec struct {
-	// Image is the composite SDK image containing all language agents and the injector
-	// binary. Used as the default source for all agents. The image tag encodes the
-	// instrumentation version; bump it to upgrade all agents at once.
-	// +optional
-	Image string `json:"image,omitempty"`
-
-	// Java overrides the Java agent image sourced from the composite image.
-	// When set, the operator runs an additional init container using this image
-	// to provide the Java agent, instead of relying on the composite image.
-	// +optional
-	Java *LanguageInjectorSpec `json:"java,omitempty"`
-
-	// NodeJS overrides the Node.js agent image sourced from the composite image.
-	// +optional
-	NodeJS *LanguageInjectorSpec `json:"nodejs,omitempty"`
-
-	// Python overrides the Python agent image sourced from the composite image.
-	// +optional
-	Python *LanguageInjectorSpec `json:"python,omitempty"`
-
-	// DotNet overrides the .NET agent image sourced from the composite image.
-	// +optional
-	DotNet *LanguageInjectorSpec `json:"dotnet,omitempty"`
-}
-
-// LanguageInjectorSpec overrides the agent image for a specific language.
-// When specified, the operator runs a dedicated init container for this language
-// rather than relying on the composite image.
-type LanguageInjectorSpec struct {
-	// Image is the language-specific agent image.
-	// +optional
-	Image string `json:"image,omitempty"`
 }
 
 // Rule defines a single instrumentation rule consisting of a selector and the

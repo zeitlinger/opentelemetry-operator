@@ -6,6 +6,7 @@ resources:
 - bases/opentelemetry.io_instrumentations.yaml
 - bases/opentelemetry.io_opampbridges.yaml
 - bases/opentelemetry.io_targetallocators.yaml
+- bases/instrumentation.opentelemetry.io_instrumentations.yaml
 # NOTE: We dont include the clusterObservability CR for now.
 # - bases/opentelemetry.io_clusterobservabilities.yaml
 # +kubebuilder:scaffold:crdkustomizeresource

@@ -48,7 +48,7 @@ See `instrumentation-v2alpha1-example.yaml` for a fully annotated working exampl
 
 **Image config is top-level (not per-rule):** You want all workloads in a CR to use the same agent versions — mixing agent versions across rules within one CR creates confusion and upgrade headaches. If you need different agent versions for different environments (e.g. canary a new Java agent in staging), create a separate CR with higher priority and a namespace selector.
 
-**Per-language image overrides:** `spec.injector.java/nodejs/python/dotnet` allow overriding individual language agent images independently of the composite image.
+**Per-language agent images:** `spec.java/nodejs/python/dotnet` are optional plain strings that add a per-language init container. When set, the operator injects an env var telling the injector binary where that language's agent lives.
 
 **Config mechanisms:** Two mechanisms per rule (use one or the other):
 1. **Env vars** — `corev1.EnvVar` slice (supports `valueFrom.secretKeyRef` etc.). The standard approach when no declarative config is needed.
@@ -61,10 +61,11 @@ See `instrumentation-v2alpha1-example.yaml` for a fully annotated working exampl
 ```
 InstrumentationSpec
   priority                int
-  injector
-    image                 string           # composite image (all agents + injector)
-    java/nodejs/python/dotnet              # per-language image overrides (optional)
-      image               string
+  injector                string           # injector binary image (libotelinject.so + otelinject.conf)
+  java                    string           # Java agent image (optional)
+  nodejs                  string           # Node.js agent image (optional)
+  python                  string           # Python agent image (optional)
+  dotnet                  string           # .NET agent image (optional)
   defaults                                 # CR-wide defaults (overridable per rule)
     mode                  InstrumentationMode  # Install | Skip | InstallUnlessConflict (default)
   rules                   []Rule
@@ -85,212 +86,6 @@ InstrumentationSpec
 - **TLS / volume mounts** — no mechanism to mount cert files (e.g. mTLS certs for collector communication) into instrumented containers; workaround is user-managed volumes. Separate from image volumes (which replace the init container pattern for agent binaries)
 - **Annotation-based opt-out** — `config.mode: Skip` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
 - **Node.js conflict detection** — Python conflict detection exists (`sitecustomize` safety checks); Node.js equivalent needs upstream work (Nikola)
-
-## Image Volumes — Local Testing
-
-Image volumes replace the init container + emptyDir approach for agent injection. They require:
-
-- **Kubernetes 1.31+** — when the `ImageVolume` feature gate was introduced (alpha)
-- **containerd 2.1+** — required by the kubelet to actually mount image volumes
-- **`ImageVolume` feature gate** — must be enabled on the API server and kubelet
-
-The operator detects Kubernetes >= 1.31 and automatically uses image volumes when available, falling back to init containers on older clusters.
-
-> **Note for kind:** `kindest/node:v1.31.x` ships with containerd 1.7.x which predates image volume support. Use `kindest/node:v1.32.x` or later, which bundles containerd 2.1.
-
-### Create the kind cluster
-
-Uses `kindest/node:v1.32.5` since that is the earliest kind node image that bundles containerd 2.1.
-
-```bash
-cat <<EOF | kind create cluster --name otel-operator-dev --config=-
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  image: kindest/node:v1.32.5
-  kubeadmConfigPatches:
-  - |
-    kind: ClusterConfiguration
-    apiServer:
-      extraArgs:
-        feature-gates: "ImageVolume=true"
-    scheduler:
-      extraArgs:
-        feature-gates: "ImageVolume=true"
-    controllerManager:
-      extraArgs:
-        feature-gates: "ImageVolume=true"
-  - |
-    kind: KubeletConfiguration
-    featureGates:
-      ImageVolume: true
-EOF
-```
-
-### Install cert-manager
-
-```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.4/cert-manager.yaml
-kubectl wait --for=condition=Available deployments/cert-manager -n cert-manager --timeout=120s
-```
-
-### Build and deploy the operator
-
-```bash
-export IMG=opentelemetry-operator:$(git rev-parse --short HEAD)
-make container
-kind load docker-image $IMG --name otel-operator-dev
-IMG=$IMG make deploy
-kubectl rollout status deployment/opentelemetry-operator-controller-manager \
-  -n opentelemetry-operator-system --timeout=120s
-```
-
-### Deploy the OpenTelemetry Collector
-
-Deploy a collector that receives OTLP over HTTP and logs telemetry to stdout for easy verification:
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: opentelemetry.io/v1beta1
-kind: OpenTelemetryCollector
-metadata:
-  name: otelcol
-spec:
-  config:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-    exporters:
-      debug:
-        verbosity: detailed
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          exporters: [debug]
-        metrics:
-          receivers: [otlp]
-          exporters: [debug]
-        logs:
-          receivers: [otlp]
-          exporters: [debug]
-EOF
-kubectl wait --for=condition=Available deployment/otelcol-collector --timeout=120s
-```
-
-### Create the Instrumentation CR
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: opentelemetry.io/v1alpha1
-kind: Instrumentation
-metadata:
-  name: my-instrumentation
-spec:
-  python:
-    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python:latest
-  exporter:
-    endpoint: http://otelcol-collector:4318
-EOF
-```
-
-### Test Python
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-python-app
-  annotations:
-    instrumentation.opentelemetry.io/inject-python: "true"
-spec:
-  containers:
-  - name: app
-    image: python:3.11-slim
-    command: ["sleep", "infinity"]
-EOF
-kubectl wait --for=condition=Ready pod/test-python-app --timeout=120s
-```
-
-Verify the image volume was injected (no init container, volume type is `image`):
-
-```bash
-kubectl get pod test-python-app -o json | python3 -c "
-import json, sys
-pod = json.load(sys.stdin)
-print('=== Volumes ===')
-for v in pod['spec']['volumes']:
-    print(' ', v['name'], '->', list(v.keys()))
-print()
-print('=== Init containers ===')
-for c in pod['spec'].get('initContainers', []):
-    print(' ', c['name'])
-print('  (none)' if not pod['spec'].get('initContainers') else '')
-print()
-print('=== Volume mounts ===')
-for m in pod['spec']['containers'][0]['volumeMounts']:
-    print(' ', m['mountPath'], '<-', m['name'])
-"
-```
-
-Expected output:
-```
-=== Volumes ===
-  kube-api-access-xxxxx -> ['name', 'projected']
-  opentelemetry-auto-instrumentation-python -> ['image', 'name']
-
-=== Init containers ===
-  (none)
-
-=== Volume mounts ===
-  /var/run/secrets/kubernetes.io/serviceaccount <- kube-api-access-xxxxx
-  /otel-auto-instrumentation-python <- opentelemetry-auto-instrumentation-python
-```
-
-Verify the agent is reachable and `PYTHONPATH` points into the `/autoinstrumentation` subdirectory
-(image volumes mount the full image filesystem, so agent files are one level deeper than with init containers):
-
-```bash
-# sitecustomize.py bootstraps the SDK — if this prints a path, injection is working
-kubectl exec test-python-app -- python3 -c "import sitecustomize; print(sitecustomize.__file__)"
-
-# PYTHONPATH should include /autoinstrumentation/ in the paths
-kubectl exec test-python-app -- env | grep PYTHONPATH
-```
-
-Expected:
-```
-/otel-auto-instrumentation-python/autoinstrumentation/opentelemetry/instrumentation/auto_instrumentation/sitecustomize.py
-PYTHONPATH=/otel-auto-instrumentation-python/autoinstrumentation/opentelemetry/instrumentation/auto_instrumentation:/otel-auto-instrumentation-python/autoinstrumentation
-```
-
-Send a trace and verify it appears in the collector logs:
-
-```bash
-# Watch collector in one terminal
-kubectl logs deployment/otelcol-collector -f
-
-# Trigger HTTP activity in another terminal (auto-instrumented by the SDK)
-kubectl exec test-python-app -- python3 -c "
-import urllib.request
-urllib.request.urlopen('http://example.com')
-print('done')
-"
-```
-
-You should see a trace with spans for the outgoing HTTP request appear in the collector logs.
-
-### Cleanup
-
-```bash
-kind delete cluster --name otel-operator-dev
-```
 
 ## Decisions (Mar 4 sync)
 
@@ -323,19 +118,20 @@ kind delete cluster --name otel-operator-dev
 - [x] Declarative config — reconciler creates ConfigMaps per rule, webhook mounts volume + sets both `OTEL_CONFIG_FILE` and `OTEL_EXPERIMENTAL_CONFIG_FILE` (both set because SDKs haven't stabilized the env var name yet)
 - [x] Controller / reconciler — watches Instrumentation CRs + namespaces, manages ConfigMap lifecycle with finalizer and pruning
 - [x] Config file env vars (`OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE`) blocked in rule env — operator sets them automatically
-- [x] Catch-all rules skip `kube-*` system namespaces
+- [x] Catch-all rules skip `kube-*` system namespaces — **note:** only `kube-*` prefix is skipped automatically; other system namespaces (e.g. `opentelemetry-operator-system`, `cert-manager`) require an explicit `disabled: true` rule in the CR (see `scratch/instrumentation-v2alpha1.yaml`)
 - [x] Name truncation uses hash suffix to avoid collisions (ConfigMap names at 253, volume names at 63)
 
 ### TODO
 
+- [ ] **System namespace skip policy** — `isSystemNamespace` currently only skips `kube-*` prefixed namespaces; decide whether to expand to other well-known system namespaces (`cert-manager`, `*-system`) or keep the explicit `disabled: true` rule as the intended opt-out mechanism
 - [ ] **Tri-state `config.mode`** (Jack) — replace `disabled: bool` with `InstrumentationMode` enum (`Install`/`Skip`/`InstallUnlessConflict`), add `spec.defaults.mode`. See task details below
-- [ ] **Temporary language-specific images** (Jack) — copy existing operator images, adjust file layout to match injector expectations. Temporary bridge until split images are built properly
-- [ ] **Per-language image override init containers** — see task details below
-- [ ] **SDK path env var overrides** — use env vars to override hardcoded paths in injector config, so existing operator images work without restructuring
+- [x] **Temporary language-specific images** — per-language injector images (`injector-java`, `injector-nodejs`, `injector-python`, `injector-dotnet`) built and tested end-to-end (Java traces confirmed in collector)
+- [x] **Per-language agent init containers** — implemented in `inject.go`; per-language init containers added when `spec.java/nodejs/python/dotnet` are set; verified working
+- [x] **SDK path env var overrides** — `JVM_AUTO_INSTRUMENTATION_AGENT_PATH`, `NODEJS_AUTO_INSTRUMENTATION_AGENT_PATH`, `PYTHON_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX`, `DOTNET_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX` injected into containers when per-language images are configured
 - [x] **Status subresource** — `InstrumentationStatus` with `Ready` condition (set by reconciler with rule/ConfigMap counts, error messages on failure)
 - [x] **Validation webhook** — `apis/v2alpha1/instrumentation_webhook.go` validates: empty image, duplicate names, reserved env vars, DNS rule names, declarativeConfig requires name, disabled+declarativeConfig conflict
 - [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
-- [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
+- [x] **Local testing with kind** — Java and Node.js traces confirmed end-to-end in collector
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
 - [x] **Declarative config e2e test** — `tests/e2e-instrumentation/injector-declarative-config/`
@@ -365,29 +161,12 @@ Replace the boolean `disabled` field with an `InstrumentationMode` enum:
 
 **Files:** `apis/v2alpha1/instrumentation_types.go`, `internal/injector/inject.go`, `internal/injector/inject_test.go`
 
-### Per-language image override init containers
-
-When `spec.injector.java` (etc.) is set, add a dedicated init container per language that copies the language-specific agent from that image, overriding what the composite image provided.
-
-**Implementation:**
-1. In `inject.go`, after the composite init container, iterate over `inst.Spec.Injector.{Java,NodeJS,Python,DotNet}`
-2. For each non-nil override, add an init container:
-   - Name: `otel-injector-{language}` (e.g. `otel-injector-java`)
-   - Image: the override image
-   - Command: `cp -r /autoinstrumentation/. /otel/` (same as composite — overwrites the language-specific files)
-   - VolumeMount: same `otel-injector` emptyDir at `/otel`
-3. Language init containers run after the composite init container (append order), so they overwrite
-
-**Open question:** Does the injector binary expect agents at fixed paths in `/otel/`? If so, each language image just needs to place files at the right paths. If paths are configurable via `otelinject.conf`, the override images need to match. Check the composite image layout.
-
-**Files:** `internal/injector/inject.go`, `internal/injector/inject_test.go`
-
 ### Validation webhook
 
 Reject invalid CRs at admission time. Follow the pattern in `apis/v1alpha1/instrumentation_webhook.go`.
 
 **Validations:**
-1. **Empty injector image** — `spec.injector.image` must be non-empty (CR is useless without it)
+1. **Empty injector image** — `spec.injector` must be non-empty (CR is useless without it)
 2. **Duplicate rule names** — rule names must be unique within a CR (colliding ConfigMap names otherwise). Empty names are fine (no ConfigMap created unless declarativeConfig is set)
 3. **Reserved env vars** — `OTEL_INJECTOR_*`, `OTEL_CONFIG_FILE`, and `OTEL_EXPERIMENTAL_CONFIG_FILE` in `config.env` must be rejected (already validated at injection time in `inject.go:validateRuleEnv`, but better to catch at CR creation)
 4. **Rule name DNS compatibility** — when `declarativeConfig` is set, the rule name becomes part of ConfigMap name `otel-injector-{cr}-{rule}`, so it must be lowercase alphanumeric + hyphens, max ~200 chars
