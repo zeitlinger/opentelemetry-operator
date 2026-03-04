@@ -29,7 +29,7 @@ func TestSelectInstrumentation_HigherPriorityWins(t *testing.T) {
 	lowPriority := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "low",
-			CreationTimestamp:  metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+			CreationTimestamp: metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 10,
@@ -40,7 +40,7 @@ func TestSelectInstrumentation_HigherPriorityWins(t *testing.T) {
 	highPriority := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "high",
-			CreationTimestamp:  metav1.NewTime(time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)),
+			CreationTimestamp: metav1.NewTime(time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)),
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 100,
@@ -70,7 +70,7 @@ func TestSelectInstrumentation_OldestWinsTie(t *testing.T) {
 	older := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "older",
-			CreationTimestamp:  metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+			CreationTimestamp: metav1.NewTime(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 50,
@@ -81,7 +81,7 @@ func TestSelectInstrumentation_OldestWinsTie(t *testing.T) {
 	newer := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              "newer",
-			CreationTimestamp:  metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)),
+			CreationTimestamp: metav1.NewTime(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)),
 		},
 		Spec: v2alpha1.InstrumentationSpec{
 			Priority: 50,

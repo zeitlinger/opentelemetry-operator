@@ -5,6 +5,7 @@ package injector
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -20,9 +21,19 @@ const (
 	ldPreloadPath     = "/otel/libotelinject.so"
 	configFilePath    = "/otel/injector/otelinject.conf"
 
+	configVolumePrefix = "otel-config-"
+	configMountPath    = "/otel/config"
+	otelConfigFilePath = configMountPath + "/" + configMapDataKey
+
 	envLDPreload                = "LD_PRELOAD"
 	envInjectorConfigFile       = "OTEL_INJECTOR_CONFIG_FILE"
 	envOTLPProtocol             = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	// Both env vars point to the same file. SDKs currently read the experimental
+	// name; once declarative config stabilizes, they'll switch to the stable name.
+	// Setting both ensures the config works regardless of which SDK version the
+	// instrumentation image bundles. Each SDK ignores the var it doesn't recognize.
+	envOTelConfigFile             = "OTEL_CONFIG_FILE"
+	envOTelExperimentalConfigFile = "OTEL_EXPERIMENTAL_CONFIG_FILE"
 	envInjectorK8sNamespace     = "OTEL_INJECTOR_K8S_NAMESPACE_NAME"
 	envInjectorK8sPodName       = "OTEL_INJECTOR_K8S_POD_NAME"
 	envInjectorK8sPodUID        = "OTEL_INJECTOR_K8S_POD_UID"
@@ -80,6 +91,10 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 		}},
 	})
 
+	// Track which config volumes have been added to avoid duplicates when
+	// multiple containers match the same rule.
+	addedConfigVolumes := map[string]bool{}
+
 	serviceName := deriveServiceName(pod)
 
 	// Inject env vars into each app container based on matching rules.
@@ -106,11 +121,49 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			MountPath: mountPath,
 		})
 
+		// Mount declarative config ConfigMap if present.
+		if rule.Config.DeclarativeConfig != nil {
+			configVolName := configVolumeName(rule.Name)
+			cmName := ConfigMapName(inst.Name, rule.Name)
+
+			if !addedConfigVolumes[configVolName] {
+				pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+					Name: configVolName,
+					VolumeSource: corev1.VolumeSource{
+						ConfigMap: &corev1.ConfigMapVolumeSource{
+							LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+						},
+					},
+				})
+				addedConfigVolumes[configVolName] = true
+			}
+
+			c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+				Name:      configVolName,
+				MountPath: configMountPath,
+				ReadOnly:  true,
+			})
+		}
+
 		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences)
+		if rule.Config.DeclarativeConfig != nil {
+			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelConfigFile, Value: otelConfigFilePath})
+			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelExperimentalConfigFile, Value: otelConfigFilePath})
+		}
 		c.Env = append(c.Env, envVars...)
 	}
 
 	return pod, nil
+}
+
+// configVolumeName returns a pod-unique volume name for a rule's ConfigMap.
+func configVolumeName(ruleName string) string {
+	name := configVolumePrefix + ruleName
+	// Volume names must be <= 63 chars and DNS-compatible.
+	if len(name) > 63 {
+		name = name[:63]
+	}
+	return name
 }
 
 // matchRule returns the first matching rule for the given container, or nil.
@@ -131,12 +184,7 @@ func matchesNamespace(sel v2alpha1.RuleSelector, namespace string) bool {
 	if len(sel.Namespaces) == 0 {
 		return true
 	}
-	for _, ns := range sel.Namespaces {
-		if ns == namespace {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(sel.Namespaces, namespace)
 }
 
 // matchesPodLabels returns true if the pod has all labels specified in the selector (AND semantics).
@@ -154,12 +202,7 @@ func matchesContainerName(sel v2alpha1.RuleSelector, name string) bool {
 	if len(sel.ContainerNames) == 0 {
 		return true
 	}
-	for _, cn := range sel.ContainerNames {
-		if cn == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(sel.ContainerNames, name)
 }
 
 // validateRuleEnv returns an error if any env var in the rule uses the reserved OTEL_INJECTOR_ prefix.

@@ -88,4 +88,3 @@ func hasMatchingRule(inst *v2alpha1.Instrumentation, namespace string, pod corev
 	}
 	return false
 }
-

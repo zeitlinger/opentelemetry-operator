@@ -631,6 +631,176 @@ func TestBuildInjectorResourceAttrs_NoOwner(t *testing.T) {
 	assert.NotContains(t, attrs, "k8s.replicaset.name")
 }
 
+func TestInjectPod_DeclarativeConfig_MountsConfigMapAndSetsEnv(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "with-config",
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// Verify config volume was added.
+	var configVol *corev1.Volume
+	for i := range result.Spec.Volumes {
+		if result.Spec.Volumes[i].ConfigMap != nil {
+			configVol = &result.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, configVol, "expected a ConfigMap volume")
+	assert.Equal(t, ConfigMapName("my-inst", "with-config"), configVol.ConfigMap.Name)
+
+	// Verify config volume mount.
+	c := result.Spec.Containers[0]
+	var configMount *corev1.VolumeMount
+	for i := range c.VolumeMounts {
+		if c.VolumeMounts[i].MountPath == configMountPath {
+			configMount = &c.VolumeMounts[i]
+			break
+		}
+	}
+	require.NotNil(t, configMount, "expected config volume mount")
+	assert.True(t, configMount.ReadOnly)
+
+	// Verify both config file env vars are set.
+	envMap := envToMap(c.Env)
+	assert.Equal(t, otelConfigFilePath, envMap[envOTelConfigFile])
+	assert.Equal(t, otelConfigFilePath, envMap[envOTelExperimentalConfigFile])
+}
+
+func TestInjectPod_DeclarativeConfig_UserCanOverrideOtelConfigFile(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "custom-path",
+					Config: v2alpha1.RuleConfig{
+						Env: []corev1.EnvVar{
+							{Name: envOTelConfigFile, Value: "/custom/config.yaml"},
+						},
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envs := result.Spec.Containers[0].Env
+	assert.Equal(t, 1, countEnv(envs, envOTelConfigFile), "expected exactly one OTEL_CONFIG_FILE")
+	assert.Equal(t, "/custom/config.yaml", findEnv(envs, envOTelConfigFile).Value)
+}
+
+func TestInjectPod_NoDeclarativeConfig_NoConfigMount(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// No ConfigMap volume should be added.
+	for _, v := range result.Spec.Volumes {
+		assert.Nil(t, v.ConfigMap, "should not have any ConfigMap volume")
+	}
+
+	// No config file env vars.
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Empty(t, envMap[envOTelConfigFile])
+	assert.Empty(t, envMap[envOTelExperimentalConfigFile])
+}
+
+func TestInjectPod_DeclarativeConfig_MultipleContainersSameRule(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: v2alpha1.InjectorSpec{Image: "sdk:latest"},
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "shared-config",
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "app1"},
+				{Name: "app2"},
+			},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// Only one ConfigMap volume should be added (not duplicated).
+	configVolCount := 0
+	for _, v := range result.Spec.Volumes {
+		if v.ConfigMap != nil {
+			configVolCount++
+		}
+	}
+	assert.Equal(t, 1, configVolCount, "should have exactly one ConfigMap volume")
+
+	// Both containers should have the config mount.
+	for _, c := range result.Spec.Containers {
+		var hasConfigMount bool
+		for _, vm := range c.VolumeMounts {
+			if vm.MountPath == configMountPath {
+				hasConfigMount = true
+				break
+			}
+		}
+		assert.True(t, hasConfigMount, "container %s should have config mount", c.Name)
+	}
+}
+
 // helpers
 
 func envToMap(envs []corev1.EnvVar) map[string]string {
