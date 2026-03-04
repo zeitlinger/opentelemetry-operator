@@ -54,7 +54,7 @@ See `instrumentation-v2alpha1-example.yaml` for a fully annotated working exampl
 1. **Env vars** — `corev1.EnvVar` slice (supports `valueFrom.secretKeyRef` etc.). The standard approach when no declarative config is needed.
 2. **Declarative config** — inline OTel declarative config (file_format: "1.0"). Operator mounts as ConfigMap, sets `OTEL_CONFIG_FILE`. **Important: SDKs ignore `OTEL_*` env vars when a config file is present**, so all SDK configuration must live in the config document. Env vars can still be set alongside declarativeConfig for non-SDK purposes (e.g. injector vars, secrets injected via `valueFrom` and referenced as `${ENV_VAR}` in the config).
 
-**Opt-out:** Set `config.disabled: true` on a rule with a tight selector, placed before any catch-all rule.
+**Conflict-aware instrumentation:** `config.mode` is a tri-state enum (`Install`, `Skip`, `InstallUnlessConflict`). Default is `InstallUnlessConflict` — the injector detects existing manual instrumentation (e.g. Python `sitecustomize`, Node.js SDK imports) and backs off if found. `Install` forces instrumentation ("steamroll"), `Skip` disables it (opt-out). This replaces the previous `disabled: bool`. Can be set at `spec.defaults.mode` (CR-wide default) and overridden per rule at `config.mode`.
 
 ### Schema shape
 
@@ -65,6 +65,8 @@ InstrumentationSpec
     image                 string           # composite image (all agents + injector)
     java/nodejs/python/dotnet              # per-language image overrides (optional)
       image               string
+  defaults                                 # CR-wide defaults (overridable per rule)
+    mode                  InstrumentationMode  # Install | Skip | InstallUnlessConflict (default)
   rules                   []Rule
     name                  string           # optional, for debuggability
     selector
@@ -72,7 +74,7 @@ InstrumentationSpec
       podLabels           map[string]string  # AND semantics, empty = all pods
       containerNames      []string         # empty = all containers
     config
-      disabled            bool             # true = suppress instrumentation
+      mode                InstrumentationMode  # overrides spec.defaults.mode
       env                 []corev1.EnvVar
       declarativeConfig   *DeclarativeConfig  # inline OTel declarative config
 ```
@@ -81,7 +83,8 @@ InstrumentationSpec
 
 - **Namespace label selectors** — currently only exact namespace name matching; selecting namespaces by label (like NetworkPolicy's `namespaceSelector`) is a v2 enhancement
 - **TLS / volume mounts** — no mechanism to mount cert files (e.g. mTLS certs for collector communication) into instrumented containers; workaround is user-managed volumes. Separate from image volumes (which replace the init container pattern for agent binaries)
-- **Annotation-based opt-out** — `config.disabled: true` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
+- **Annotation-based opt-out** — `config.mode: Skip` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
+- **Node.js conflict detection** — Python conflict detection exists (`sitecustomize` safety checks); Node.js equivalent needs upstream work (Nikola)
 
 ## Image Volumes — Local Testing
 
@@ -289,6 +292,15 @@ You should see a trace with spans for the outgoing HTTP request appear in the co
 kind delete cluster --name otel-operator-dev
 ```
 
+## Decisions (Mar 4 sync)
+
+1. **Use existing composite images for hackathon** — env var overrides point the injector to the right SDK paths. Split images deferred to post-hackathon.
+2. **Tri-state instrumentation mode** — `config.disabled: bool` → `config.mode: Install|Skip|InstallUnlessConflict` with `InstallUnlessConflict` as default. Also settable as CR-wide default at `spec.defaults.mode`.
+3. **Temporary language-specific images** (Jack) — copy existing operator images with file layout adjusted to match injector expectations.
+4. **Python image restructuring → injector SIG** (Nikola) — propose env var overrides per glibc flavor and standardize Python layout to match .NET.
+5. **Crash-loop auto-recovery** (stretch goal) — operator watches k8s events for restart counts / failure reasons and avoids re-instrumenting failing pods.
+6. **Operator internal telemetry** — export instrumentation status metrics via OTel collector, scrapeable by Prometheus for a community dashboard.
+
 ## Status
 
 ### Done
@@ -299,7 +311,7 @@ kind delete cluster --name otel-operator-dev
 - [x] Pod mutator with rules-based matching (namespace ∧ pod labels ∧ container names)
 - [x] CR priority resolution (multi-CR tiebreaking)
 - [x] Env var injection per container from `config.env`
-- [x] Disabled rule support (opt-out)
+- [x] Disabled rule support (opt-out) — being replaced by tri-state `config.mode`
 - [x] Annotation-based triggering removed — rules selectors are the selection mechanism
 - [x] `OTEL_INJECTOR_*` env var validation (hard error on reserved prefix in user config)
 - [x] User env vars win over operator defaults (`appendIfNotSet` pattern)
@@ -313,13 +325,41 @@ kind delete cluster --name otel-operator-dev
 
 ### TODO
 
+- [ ] **Tri-state `config.mode`** (Jack) — replace `disabled: bool` with `InstrumentationMode` enum (`Install`/`Skip`/`InstallUnlessConflict`), add `spec.defaults.mode`. See task details below
+- [ ] **Temporary language-specific images** (Jack) — copy existing operator images, adjust file layout to match injector expectations. Temporary bridge until split images are built properly
 - [ ] **Per-language image override init containers** — see task details below
+- [ ] **SDK path env var overrides** — use env vars to override hardcoded paths in injector config, so existing operator images work without restructuring
 - [ ] **Status subresource** — add `InstrumentationStatus` with conditions and rule match info
 - [ ] **Validation webhook** — see task details below
-- [ ] **Image volumes** — separate work package (Johanna), K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
+- [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
 - [ ] **Local testing with kind** — set up kind cluster instructions for v2alpha1 injector (adapt Johanna's v1alpha1 kind setup in "Image Volumes — Local Testing" section)
+- [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
+- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
+
+### Future work (post-hackathon)
+
+- [ ] **Node.js conflict detection** (Nikola) — upstream equivalent of Python's `sitecustomize` safety checks for Node.js
+- [ ] **Python image restructuring** (Nikola → injector SIG) — standardize Python image to match .NET layout (both glibc+musl in one dir); propose env var overrides per glibc flavor to injector SIG
+- [ ] **Split language images** — decompose composite image into individual shareable images (deferred from hackathon, depends on injector SIG alignment)
 
 ## Task details
+
+### Tri-state `config.mode` (replaces `disabled: bool`)
+
+Replace the boolean `disabled` field with an `InstrumentationMode` enum:
+- `Install` — force instrumentation even if existing manual instrumentation is detected
+- `Skip` — suppress instrumentation (replaces `disabled: true`)
+- `InstallUnlessConflict` (default) — install unless the injector detects existing instrumentation (e.g. Python `sitecustomize` conflict)
+
+**Implementation:**
+1. Add `InstrumentationMode` string type + constants to `instrumentation_types.go`
+2. Add `spec.defaults.mode` field (CR-wide default)
+3. Replace `config.disabled bool` with `config.mode *InstrumentationMode` on `RuleConfig`
+4. In `inject.go`, resolve effective mode: rule-level overrides CR-level default, absent = `InstallUnlessConflict`
+5. Pass resolved mode to injector via env var (e.g. `OTEL_INJECTOR_MODE`)
+6. Update example CR, tests, validation webhook
+
+**Files:** `apis/v2alpha1/instrumentation_types.go`, `internal/injector/inject.go`, `internal/injector/inject_test.go`
 
 ### Per-language image override init containers
 
