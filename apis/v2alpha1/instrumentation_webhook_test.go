@@ -197,7 +197,7 @@ func TestValidate_SkipWithDeclarativeConfig(t *testing.T) {
 
 	_, err := validate(inst)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mode Skip must not have declarativeConfig")
+	assert.Contains(t, err.Error(), "mode skip must not have declarativeConfig")
 }
 
 func TestValidate_InvalidMode(t *testing.T) {
@@ -259,7 +259,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	// Should report all errors, not just the first.
 	assert.Contains(t, err.Error(), "spec.injector")
 	assert.Contains(t, err.Error(), "OTEL_INJECTOR_")
-	assert.Contains(t, err.Error(), "mode Skip must not have declarativeConfig")
+	assert.Contains(t, err.Error(), "mode skip must not have declarativeConfig")
 }
 
 func TestValidate_UpdateSameAsCreate(t *testing.T) {

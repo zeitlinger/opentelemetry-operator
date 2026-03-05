@@ -5,6 +5,7 @@ metadata:
     app: my-app
 spec:
   containers:
+    # myapp matches catch-all rule (no explicit mode) — inherits defaults.mode=install
     - name: myapp
       env:
         - name: LD_PRELOAD
@@ -25,8 +26,29 @@ spec:
         - name: otel-injector
           mountPath: /otel
           readOnly: true
-    # sidecar should NOT have any injection (mode=Skip)
+    # sidecar matches skip-sidecar rule (mode=skip) — no injection at all
     - name: sidecar
+    # conflict-container matches conflict-aware rule (mode=install_unless_conflict)
+    - name: conflict-container
+      env:
+        - name: LD_PRELOAD
+          value: /otel/autoinstrumentation/libotelinject.so
+        - name: OTEL_INJECTOR_CONFIG_FILE
+          value: /otel/autoinstrumentation/injector/otelinject.conf
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: http://otel-collector:4318
+        - name: OTEL_INJECTOR_MODE
+          value: install_unless_conflict
+        - name: OTEL_INJECTOR_K8S_CONTAINER_NAME
+          value: conflict-container
+        - name: OTEL_INJECTOR_SERVICE_NAME
+          value: my-app
+        - name: OTEL_INJECTOR_SERVICE_NAMESPACE
+        - name: OTEL_INJECTOR_RESOURCE_ATTRIBUTES
+      volumeMounts:
+        - name: otel-injector
+          mountPath: /otel
+          readOnly: true
   volumes:
     - name: otel-injector
       image:

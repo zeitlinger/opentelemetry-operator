@@ -67,7 +67,7 @@ func validate(inst *Instrumentation) (admission.Warnings, error) {
 		case InstrumentationModeInstall, InstrumentationModeSkip, InstrumentationModeInstallUnlessConflict:
 			// valid
 		default:
-			errs = append(errs, fmt.Sprintf("spec.defaults.mode: invalid mode %q (must be Install, Skip, or InstallUnlessConflict)", *inst.Spec.Defaults.Mode))
+			errs = append(errs, fmt.Sprintf("spec.defaults.mode: invalid mode %q (must be install, skip, or install_unless_conflict)", *inst.Spec.Defaults.Mode))
 		}
 	}
 
@@ -120,13 +120,13 @@ func validate(inst *Instrumentation) (admission.Warnings, error) {
 			case InstrumentationModeInstall, InstrumentationModeSkip, InstrumentationModeInstallUnlessConflict:
 				// valid
 			default:
-				errs = append(errs, fmt.Sprintf("%s: invalid mode %q (must be Install, Skip, or InstallUnlessConflict)", prefix, *rule.Config.Mode))
+				errs = append(errs, fmt.Sprintf("%s: invalid mode %q (must be install, skip, or install_unless_conflict)", prefix, *rule.Config.Mode))
 			}
 		}
 
 		// 7. Skip + declarativeConfig conflict.
 		if rule.Config.Mode != nil && *rule.Config.Mode == InstrumentationModeSkip && rule.Config.DeclarativeConfig != nil {
-			errs = append(errs, fmt.Sprintf("%s: mode Skip must not have declarativeConfig (config would be created but never mounted)", prefix))
+			errs = append(errs, fmt.Sprintf("%s: mode skip must not have declarativeConfig (config would be created but never mounted)", prefix))
 		}
 	}
 

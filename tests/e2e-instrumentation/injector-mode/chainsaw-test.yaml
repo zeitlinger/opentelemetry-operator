@@ -24,7 +24,7 @@ spec:
       catch:
         - podLogs:
             selector: app=my-app
-    - name: Verify mode values are correct
+    - name: Verify all three modes
       try:
         - script:
             timeout: 30s
@@ -32,7 +32,7 @@ spec:
               #!/bin/bash
               set -e
 
-              # Verify myapp container has OTEL_INJECTOR_MODE=install (inherited from CR default)
+              # 1. myapp: inherits defaults.mode=install
               MODE=$(kubectl get pod -n ${NAMESPACE} -l app=my-app \
                 -o jsonpath='{.items[0].spec.containers[?(@.name=="myapp")].env[?(@.name=="OTEL_INJECTOR_MODE")].value}')
               if [ "$MODE" != "install" ]; then
@@ -41,15 +41,26 @@ spec:
               fi
               echo "OK: myapp has OTEL_INJECTOR_MODE=install (inherited from defaults.mode)"
 
-              # Verify sidecar container was NOT injected (mode=Skip)
+              # 2. sidecar: mode=skip — no injection at all
               SIDECAR_ENV=$(kubectl get pod -n ${NAMESPACE} -l app=my-app \
                 -o jsonpath='{.items[0].spec.containers[?(@.name=="sidecar")].env[*].name}')
               if echo "$SIDECAR_ENV" | grep -q "LD_PRELOAD"; then
-                echo "FAIL: sidecar has LD_PRELOAD but mode=Skip should suppress injection"
+                echo "FAIL: sidecar has LD_PRELOAD but mode=skip should suppress injection"
                 exit 1
               fi
               if echo "$SIDECAR_ENV" | grep -q "OTEL_INJECTOR_MODE"; then
-                echo "FAIL: sidecar has OTEL_INJECTOR_MODE but mode=Skip should suppress injection"
+                echo "FAIL: sidecar has OTEL_INJECTOR_MODE but mode=skip should suppress injection"
                 exit 1
               fi
-              echo "OK: sidecar container correctly skipped (mode=Skip overrides CR default)"
+              echo "OK: sidecar correctly skipped (mode=skip overrides CR default)"
+
+              # 3. conflict-container: explicit mode=install_unless_conflict
+              CONFLICT_MODE=$(kubectl get pod -n ${NAMESPACE} -l app=my-app \
+                -o jsonpath='{.items[0].spec.containers[?(@.name=="conflict-container")].env[?(@.name=="OTEL_INJECTOR_MODE")].value}')
+              if [ "$CONFLICT_MODE" != "install_unless_conflict" ]; then
+                echo "FAIL: conflict-container OTEL_INJECTOR_MODE='$CONFLICT_MODE', expected 'install_unless_conflict'"
+                exit 1
+              fi
+              echo "OK: conflict-container has OTEL_INJECTOR_MODE=install_unless_conflict (explicit rule override)"
+
+              echo "PASS: all three mode values verified"

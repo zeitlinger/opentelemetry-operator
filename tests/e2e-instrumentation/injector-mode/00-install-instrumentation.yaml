@@ -5,16 +5,26 @@ metadata:
 spec:
   injector: busybox:latest
   defaults:
-    mode: Install
+    mode: install
   rules:
-    # Rule with explicit mode=Skip overriding CR default — should suppress injection.
+    # Rule with explicit mode=skip overriding CR default — should suppress injection.
     - name: skip-sidecar
       selector:
         containerNames:
           - sidecar
       config:
-        mode: Skip
-    # Rule with no mode — inherits CR default (Install).
+        mode: skip
+    # Rule with explicit mode=install_unless_conflict — overrides CR default.
+    - name: conflict-aware
+      selector:
+        containerNames:
+          - conflict-container
+      config:
+        mode: install_unless_conflict
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318
+    # Rule with no mode — inherits CR default (install).
     - name: catch-all
       config:
         env:

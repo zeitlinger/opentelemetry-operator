@@ -90,19 +90,6 @@ func resolveMode(crDefault, ruleOverride *v2alpha1.InstrumentationMode) v2alpha1
 	return v2alpha1.InstrumentationModeInstallUnlessConflict
 }
 
-// modeToEnvValue converts the CRD enum (PascalCase) to the lowercase value
-// expected by the injector binary (matching its existing env var conventions).
-func modeToEnvValue(mode v2alpha1.InstrumentationMode) string {
-	switch mode {
-	case v2alpha1.InstrumentationModeInstall:
-		return "install"
-	case v2alpha1.InstrumentationModeSkip:
-		return "skip"
-	default:
-		return "install_unless_conflict"
-	}
-}
-
 func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) (corev1.Pod, error) {
 	// Validate all rules up front before mutating the pod.
 	for _, rule := range inst.Spec.Rules {
@@ -439,7 +426,7 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceNameWithFallback(serviceName, containerName)},
 		corev1.EnvVar{Name: envInjectorServiceNamespace, Value: namespace},
 		corev1.EnvVar{Name: envInjectorResourceAttributes, Value: buildInjectorResourceAttrs(containerName, ownerRefs)},
-		corev1.EnvVar{Name: envInjectorMode, Value: modeToEnvValue(mode)},
+		corev1.EnvVar{Name: envInjectorMode, Value: string(mode)},
 	)
 
 	return envs

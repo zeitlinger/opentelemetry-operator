@@ -19,3 +19,6 @@ spec:
         - name: sidecar
           image: busybox:latest
           command: ["sleep", "3600"]
+        - name: conflict-container
+          image: busybox:latest
+          command: ["sleep", "3600"]

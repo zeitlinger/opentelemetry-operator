@@ -39,9 +39,9 @@ spec:
                 properties:
                   mode:
                     enum:
-                    - Install
-                    - Skip
-                    - InstallUnlessConflict
+                    - install
+                    - skip
+                    - install_unless_conflict
                     type: string
                 type: object
               dotnet:
@@ -148,9 +148,9 @@ spec:
                           type: array
                         mode:
                           enum:
-                          - Install
-                          - Skip
-                          - InstallUnlessConflict
+                          - install
+                          - skip
+                          - install_unless_conflict
                           type: string
                       type: object
                     name:

@@ -11,22 +11,22 @@ import (
 )
 
 // InstrumentationMode controls whether a rule installs instrumentation.
-// +kubebuilder:validation:Enum=Install;Skip;InstallUnlessConflict
+// +kubebuilder:validation:Enum=install;skip;install_unless_conflict
 type InstrumentationMode string
 
 const (
 	// InstrumentationModeInstall forces instrumentation even if existing manual
 	// instrumentation is detected (e.g. Python sitecustomize, Node.js SDK imports).
-	InstrumentationModeInstall InstrumentationMode = "Install"
+	InstrumentationModeInstall InstrumentationMode = "install"
 
 	// InstrumentationModeSkip suppresses instrumentation for matching containers.
 	// Use this to explicitly opt out specific workloads from broader catch-all rules.
-	InstrumentationModeSkip InstrumentationMode = "Skip"
+	InstrumentationModeSkip InstrumentationMode = "skip"
 
 	// InstrumentationModeInstallUnlessConflict installs instrumentation unless the
 	// injector detects existing manual instrumentation at runtime and backs off.
 	// This is the default when no mode is specified.
-	InstrumentationModeInstallUnlessConflict InstrumentationMode = "InstallUnlessConflict"
+	InstrumentationModeInstallUnlessConflict InstrumentationMode = "install_unless_conflict"
 )
 
 // InstrumentationSpec defines the desired state of Instrumentation.
