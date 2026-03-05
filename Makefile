@@ -592,10 +592,12 @@ container-instrumentation-apache-httpd:
 container-instrumentation-all: container-instrumentation-java container-instrumentation-nodejs container-instrumentation-python container-instrumentation-dotnet container-instrumentation-apache-httpd
 
 ##@ Injector Images (hackathon composite SDK injection)
-# Build the injector binary image (libotelinject.so + otelinject.conf)
+# Build the injector binary image from source (opentelemetry-injector sibling repo).
+# Requires: ~/source/opentelemetry-injector checked out on hackathon-16-mode-support.
+INJECTOR_SOURCE_DIR ?= $(HOME)/source/opentelemetry-injector
 .PHONY: container-injector
 container-injector:
-	docker build --platform $(PLATFORM) --load -t ${INJECTOR_IMG} images/injector
+	docker build --platform $(PLATFORM) --load -f $(INJECTOR_SOURCE_DIR)/Dockerfile.operator-e2e -t ${INJECTOR_IMG} $(INJECTOR_SOURCE_DIR)
 
 # Build the Java agent image
 .PHONY: container-injector-java
@@ -635,6 +637,7 @@ load-image-injector-all: container-injector-all kind
 add-image-injector:
 	$(SED_INPLACE) 's|{{INJECTOR_IMG}}|$(INJECTOR_IMG)|g' tests/e2e-instrumentation/injector-*/00-install-instrumentation.yaml
 	$(SED_INPLACE) 's|{{INJECTOR_JAVA_IMG}}|$(INJECTOR_JAVA_IMG)|g' tests/e2e-instrumentation/injector-java/00-install-instrumentation.yaml
+	$(SED_INPLACE) 's|{{INJECTOR_JAVA_IMG}}|$(INJECTOR_JAVA_IMG)|g' tests/e2e-instrumentation/injector-mode-conflict/00-install-instrumentation.yaml
 	$(SED_INPLACE) 's|{{INJECTOR_NODEJS_IMG}}|$(INJECTOR_NODEJS_IMG)|g' tests/e2e-instrumentation/injector-nodejs/00-install-instrumentation.yaml
 
 ##@ Kind Cluster

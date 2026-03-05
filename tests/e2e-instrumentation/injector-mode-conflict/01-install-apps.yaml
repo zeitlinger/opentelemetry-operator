@@ -1,0 +1,53 @@
+---
+# Deployment with mode=install: injector should force-inject OTel agent
+# even though a foreign -javaagent is already present.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-install
+spec:
+  selector:
+    matchLabels:
+      app: java-install
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: java-install
+        test-mode: install
+    spec:
+      containers:
+      - name: myapp
+        # Use a glibc-based image so LD_PRELOAD works (Java app image is Debian-based).
+        # We override the command to just print env vars — we only care about the injector's
+        # modification of JAVA_TOOL_OPTIONS, not running a real Java app.
+        image: ghcr.io/open-telemetry/opentelemetry-operator/e2e-test-app-java:main
+        command: ['sh', '-c', 'echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS" && sleep 3600']
+        env:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-javaagent:/fake/foreign-agent.jar"
+---
+# Deployment with mode=install_unless_conflict: injector should detect the
+# foreign -javaagent and back off, leaving JAVA_TOOL_OPTIONS unchanged.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-conflict
+spec:
+  selector:
+    matchLabels:
+      app: java-conflict
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: java-conflict
+        test-mode: install-unless-conflict
+    spec:
+      containers:
+      - name: myapp
+        image: ghcr.io/open-telemetry/opentelemetry-operator/e2e-test-app-java:main
+        command: ['sh', '-c', 'echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS" && sleep 3600']
+        env:
+        - name: JAVA_TOOL_OPTIONS
+          value: "-javaagent:/fake/foreign-agent.jar"

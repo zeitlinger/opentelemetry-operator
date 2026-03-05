@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: injector-mode-conflict
+spec:
+  steps:
+    - name: step-00
+      try:
+        - apply:
+            file: 00-install-instrumentation.yaml
+      cleanup:
+        - delete:
+            ref:
+              apiVersion: opentelemetry.io/v2alpha1
+              kind: Instrumentation
+              name: injector-mode-conflict
+    - name: step-01
+      try:
+        - apply:
+            file: 01-install-apps.yaml
+        - assert:
+            file: 01-assert.yaml
+      catch:
+        - podLogs:
+            selector: app=java-install
+        - podLogs:
+            selector: app=java-conflict
+    - name: Verify conflict detection behavior
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Wait for pods to emit their JAVA_TOOL_OPTIONS log line
+              for app in java-install java-conflict; do
+                for i in $(seq 1 30); do
+                  if kubectl logs -n ${NAMESPACE} -l app=$app --tail=10 2>/dev/null | grep -q "JAVA_TOOL_OPTIONS="; then
+                    break
+                  fi
+                  sleep 2
+                done
+              done
+
+              # 1. mode=install: injector should force-inject OTel agent alongside the foreign one.
+              INSTALL_OPTS=$(kubectl logs -n ${NAMESPACE} -l app=java-install --tail=10 | grep "JAVA_TOOL_OPTIONS=" | head -1)
+              echo "java-install log: $INSTALL_OPTS"
+
+              if ! echo "$INSTALL_OPTS" | grep -q "/otel/javaagent.jar"; then
+                echo "FAIL: mode=install did not inject OTel agent. Expected /otel/javaagent.jar in JAVA_TOOL_OPTIONS"
+                exit 1
+              fi
+              if ! echo "$INSTALL_OPTS" | grep -q "/fake/foreign-agent.jar"; then
+                echo "FAIL: mode=install lost the foreign agent. Expected /fake/foreign-agent.jar in JAVA_TOOL_OPTIONS"
+                exit 1
+              fi
+              echo "OK: mode=install correctly injected OTel agent alongside foreign agent"
+
+              # 2. mode=install_unless_conflict: injector should back off, leaving only the foreign agent.
+              CONFLICT_OPTS=$(kubectl logs -n ${NAMESPACE} -l app=java-conflict --tail=10 | grep "JAVA_TOOL_OPTIONS=" | head -1)
+              echo "java-conflict log: $CONFLICT_OPTS"
+
+              if echo "$CONFLICT_OPTS" | grep -q "/otel/javaagent.jar"; then
+                echo "FAIL: mode=install_unless_conflict should have backed off but OTel agent was injected"
+                exit 1
+              fi
+              if ! echo "$CONFLICT_OPTS" | grep -q "/fake/foreign-agent.jar"; then
+                echo "FAIL: mode=install_unless_conflict lost the foreign agent"
+                exit 1
+              fi
+              echo "OK: mode=install_unless_conflict correctly backed off (foreign agent preserved, OTel agent not injected)"
+
+              echo "PASS: conflict detection verified for both modes"
