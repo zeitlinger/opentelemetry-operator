@@ -390,6 +390,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err = injector.NewRollbackReconciler(
+		mgr.GetClient(),
+		mgr.GetScheme(),
+		ctrl.Log.WithName("controllers").WithName("RollbackController"),
+	).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "RollbackController")
+		os.Exit(1)
+	}
+
 	if cfg.EnableWebhooks {
 		var crdMetrics *otelv1beta1.Metrics
 

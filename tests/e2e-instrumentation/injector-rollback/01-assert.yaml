@@ -1,0 +1,12 @@
+# Verify the pod was initially injected with LD_PRELOAD.
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: crash-app
+spec:
+  containers:
+    - name: myapp
+      env:
+        - name: LD_PRELOAD
+          value: /otel/autoinstrumentation/libotelinject.so

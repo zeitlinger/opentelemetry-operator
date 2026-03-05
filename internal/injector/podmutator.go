@@ -49,6 +49,11 @@ func (pm *injectorPodMutator) Mutate(ctx context.Context, ns corev1.Namespace, p
 		return pod, nil
 	}
 
+	if shouldSkipForRollback(inst, pod) {
+		logger.Info("Skipping injection - workload is rolled back due to crash loop")
+		return pod, nil
+	}
+
 	return injectPod(inst, pod, ns.Name)
 }
 

@@ -214,3 +214,132 @@ func TestMutate_AlreadyInjectedSkips(t *testing.T) {
 	assert.Len(t, result.Spec.Volumes, 1)
 	assert.Empty(t, result.Spec.Containers[0].Env)
 }
+
+func TestMutate_RolledBackWorkload_SkipsInjection(t *testing.T) {
+	cr := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cr", Generation: 1},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+		Status: v2alpha1.InstrumentationStatus{
+			InstrumentedWorkloads: []v2alpha1.InstrumentedWorkload{{
+				WorkloadRef:    v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "myapp"},
+				RuleName:       "catch-all",
+				InstrumentedAt: metav1.NewTime(time.Now()),
+				CRGeneration:   1,
+				Rollback: &v2alpha1.RollbackInfo{
+					Reason:       "CrashLoopBackOff",
+					RolledBackAt: metav1.NewTime(time.Now()),
+				},
+			}},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithObjects(cr).
+		WithStatusSubresource(cr).
+		Build()
+
+	pm := &injectorPodMutator{Logger: logr.Discard(), Client: cli}
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "myapp-abc123-xyz",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind: "ReplicaSet",
+				Name: "myapp-abc123",
+			}},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result, err := pm.Mutate(context.Background(), ns, pod)
+	require.NoError(t, err)
+	// Should not inject — no LD_PRELOAD env var.
+	assert.Empty(t, result.Spec.Containers[0].Env)
+}
+
+func TestMutate_RolledBackWorkload_NewerGeneration_Injects(t *testing.T) {
+	cr := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cr", Generation: 2}, // Newer generation
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+		Status: v2alpha1.InstrumentationStatus{
+			InstrumentedWorkloads: []v2alpha1.InstrumentedWorkload{{
+				WorkloadRef:    v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "myapp"},
+				RuleName:       "catch-all",
+				InstrumentedAt: metav1.NewTime(time.Now()),
+				CRGeneration:   1, // Rolled back at generation 1
+				Rollback: &v2alpha1.RollbackInfo{
+					Reason:       "CrashLoopBackOff",
+					RolledBackAt: metav1.NewTime(time.Now()),
+				},
+			}},
+		},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithObjects(cr).
+		WithStatusSubresource(cr).
+		Build()
+
+	pm := &injectorPodMutator{Logger: logr.Discard(), Client: cli}
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "myapp-abc123-xyz",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind: "ReplicaSet",
+				Name: "myapp-abc123",
+			}},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result, err := pm.Mutate(context.Background(), ns, pod)
+	require.NoError(t, err)
+	// Should inject — newer CR generation means rollback is cleared.
+	assert.NotEmpty(t, result.Spec.Containers[0].Env)
+}
+
+func TestMutate_WorkloadNotInInventory_Injects(t *testing.T) {
+	cr := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cr", Generation: 1},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+		// No InstrumentedWorkloads in status — workload not tracked yet.
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithObjects(cr).
+		Build()
+
+	pm := &injectorPodMutator{Logger: logr.Discard(), Client: cli}
+	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "myapp-abc123-xyz",
+			Namespace: "default",
+			OwnerReferences: []metav1.OwnerReference{{
+				Kind: "ReplicaSet",
+				Name: "myapp-abc123",
+			}},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result, err := pm.Mutate(context.Background(), ns, pod)
+	require.NoError(t, err)
+	// Should inject normally.
+	assert.NotEmpty(t, result.Spec.Containers[0].Env)
+}

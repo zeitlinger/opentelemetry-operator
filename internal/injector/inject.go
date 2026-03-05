@@ -30,9 +30,9 @@ const (
 	configMountPath    = "/otel/config"
 	otelConfigFilePath = configMountPath + "/" + configMapDataKey
 
-	envLDPreload                = "LD_PRELOAD"
-	envInjectorConfigFile       = "OTEL_INJECTOR_CONFIG_FILE"
-	envOTLPProtocol             = "OTEL_EXPORTER_OTLP_PROTOCOL"
+	envLDPreload          = "LD_PRELOAD"
+	envInjectorConfigFile = "OTEL_INJECTOR_CONFIG_FILE"
+	envOTLPProtocol       = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	// Both env vars point to the same file. SDKs currently read the experimental
 	// name; once declarative config stabilizes, they'll switch to the stable name.
 	// Setting both ensures the config works regardless of which SDK version the
@@ -266,6 +266,7 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 //   - OTEL_SERVICE_NAME: SDK reads it directly, ignores resource attrs
 //   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
 //   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
+//
 // langVolumeName returns the volume name for a per-language image volume.
 func langVolumeName(lang string) string {
 	return volumeName + "-" + lang
@@ -517,6 +518,27 @@ func deriveServiceName(pod corev1.Pod) string {
 		}
 	}
 	return pod.Name
+}
+
+// resolveWorkloadRef determines the parent workload for a pod by inspecting owner references.
+// Uses the same heuristic as deriveServiceName: ReplicaSet → Deployment (strip hash suffix),
+// StatefulSet/DaemonSet/Job → direct owner. Returns nil if no recognized owner is found.
+func resolveWorkloadRef(pod corev1.Pod) *v2alpha1.WorkloadReference {
+	for _, owner := range pod.OwnerReferences {
+		switch owner.Kind {
+		case "ReplicaSet":
+			name := owner.Name
+			if idx := strings.LastIndex(name, "-"); idx > 0 {
+				return &v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: pod.Namespace, Name: name[:idx]}
+			}
+			return &v2alpha1.WorkloadReference{Kind: "ReplicaSet", Namespace: pod.Namespace, Name: name}
+		case "StatefulSet", "DaemonSet":
+			return &v2alpha1.WorkloadReference{Kind: owner.Kind, Namespace: pod.Namespace, Name: owner.Name}
+		case "Job":
+			return &v2alpha1.WorkloadReference{Kind: "Job", Namespace: pod.Namespace, Name: owner.Name}
+		}
+	}
+	return nil
 }
 
 func hasEnv(envs []corev1.EnvVar, name string) bool {

@@ -1154,6 +1154,93 @@ func TestInjectPod_NoPerLanguageImages_NoLangEnvVars(t *testing.T) {
 	assert.Empty(t, envMap[envDotnetAgentPath])
 }
 
+func TestResolveWorkloadRef_ReplicaSet_DerivesDeployment(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "prod",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "myapp-abc123"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	require.NotNil(t, ref)
+	assert.Equal(t, "Deployment", ref.Kind)
+	assert.Equal(t, "prod", ref.Namespace)
+	assert.Equal(t, "myapp", ref.Name)
+}
+
+func TestResolveWorkloadRef_ReplicaSet_NoHash(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "prod",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "nohash"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	require.NotNil(t, ref)
+	// No dash in name → stays as ReplicaSet (can't derive Deployment).
+	assert.Equal(t, "ReplicaSet", ref.Kind)
+	assert.Equal(t, "nohash", ref.Name)
+}
+
+func TestResolveWorkloadRef_StatefulSet(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "prod",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "redis"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	require.NotNil(t, ref)
+	assert.Equal(t, "StatefulSet", ref.Kind)
+	assert.Equal(t, "redis", ref.Name)
+}
+
+func TestResolveWorkloadRef_DaemonSet(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "kube-system",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: "fluentd"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	require.NotNil(t, ref)
+	assert.Equal(t, "DaemonSet", ref.Kind)
+	assert.Equal(t, "kube-system", ref.Namespace)
+	assert.Equal(t, "fluentd", ref.Name)
+}
+
+func TestResolveWorkloadRef_Job(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "batch",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Job", Name: "cleanup-28450380"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	require.NotNil(t, ref)
+	assert.Equal(t, "Job", ref.Kind)
+	assert.Equal(t, "cleanup-28450380", ref.Name)
+}
+
+func TestResolveWorkloadRef_NoOwner(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "standalone-pod", Namespace: "default"},
+	}
+	ref := resolveWorkloadRef(pod)
+	assert.Nil(t, ref)
+}
+
+func TestResolveWorkloadRef_UnknownOwner(t *testing.T) {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       "default",
+			OwnerReferences: []metav1.OwnerReference{{Kind: "VirtualMachine", Name: "vm-1"}},
+		},
+	}
+	ref := resolveWorkloadRef(pod)
+	assert.Nil(t, ref)
+}
+
 func mustInjectPod(t *testing.T, inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) corev1.Pod {
 	t.Helper()
 	result, err := injectPod(inst, pod, namespace)

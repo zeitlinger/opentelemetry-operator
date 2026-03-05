@@ -1,0 +1,101 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: injector-rollback
+spec:
+  # The test needs time for the crash loop + grace period (10s) + rollback detection.
+  timeouts:
+    assert: 120s
+    apply: 30s
+  steps:
+    - name: step-00-install-instrumentation
+      try:
+        - apply:
+            file: 00-install-instrumentation.yaml
+      cleanup:
+        - delete:
+            ref:
+              apiVersion: opentelemetry.io/v2alpha1
+              kind: Instrumentation
+              name: injector-rollback
+
+    - name: step-01-deploy-app-and-verify-injection
+      description: Deploy an app that crashes when LD_PRELOAD is set
+      try:
+        - apply:
+            file: 01-install-app.yaml
+        - assert:
+            file: 01-assert.yaml
+      catch:
+        - podLogs:
+            selector: app=crash-app
+
+    - name: step-02-wait-for-rollback
+      description: Wait for the rollback controller to detect CrashLoopBackOff and trigger rollback
+      try:
+        - assert:
+            file: 02-assert-rollback.yaml
+        - script:
+            timeout: 120s
+            content: |
+              #!/bin/bash
+              set -eu
+              # Verify the deployment got the restartedAt annotation (pod bounce).
+              ANNOTATION=$(kubectl get deployment crash-app -n ${NAMESPACE} \
+                -o jsonpath='{.spec.template.metadata.annotations.kubectl\.kubernetes\.io/restartedAt}')
+              if [ -z "$ANNOTATION" ]; then
+                echo "FAIL: deployment missing restartedAt annotation"
+                exit 1
+              fi
+              echo "PASS: deployment has restartedAt annotation: $ANNOTATION"
+      catch:
+        - podLogs:
+            selector: app=crash-app
+        - script:
+            content: |
+              kubectl get instrumentation injector-rollback -o yaml | head -60
+              kubectl get pods -l app=crash-app -o wide
+
+    - name: step-03-verify-new-pods-skip-injection
+      description: After rollback, new pods should NOT have LD_PRELOAD injected
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              #!/bin/bash
+              set -eu
+              # Wait for at least one running pod without LD_PRELOAD.
+              for i in $(seq 1 30); do
+                POD_ENV=$(kubectl get pods -n ${NAMESPACE} -l app=crash-app \
+                  -o jsonpath='{.items[0].spec.containers[0].env[*].name}' 2>/dev/null || true)
+                if [ -n "$POD_ENV" ] && ! echo "$POD_ENV" | grep -q "LD_PRELOAD"; then
+                  echo "PASS: new pod does not have LD_PRELOAD (injection skipped after rollback)"
+                  exit 0
+                fi
+                sleep 2
+              done
+              echo "FAIL: pod still has LD_PRELOAD after rollback"
+              kubectl get pods -n ${NAMESPACE} -l app=crash-app -o yaml
+              exit 1
+
+    - name: step-04-update-cr-and-verify-recovery
+      description: Update the CR spec to bump generation — rollback should be cleared
+      try:
+        - apply:
+            file: 03-update-instrumentation.yaml
+        - assert:
+            file: 03-assert-recovery.yaml
+        - script:
+            timeout: 60s
+            content: |
+              #!/bin/bash
+              set -eu
+              # Verify rollback field is null (cleared) on the workload entry.
+              ROLLBACK=$(kubectl get instrumentation injector-rollback \
+                -o jsonpath='{.status.instrumentedWorkloads[0].rollback}')
+              if [ -n "$ROLLBACK" ]; then
+                echo "FAIL: rollback not cleared after CR update. Got: $ROLLBACK"
+                exit 1
+              fi
+              echo "PASS: rollback cleared after CR generation bump (recovery)"

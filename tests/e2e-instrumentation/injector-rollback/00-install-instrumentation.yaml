@@ -1,0 +1,22 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-rollback
+spec:
+  # Use a nonexistent injector image so LD_PRELOAD causes crashes.
+  # The busybox image doesn't have libotelinject.so, so the dynamic linker
+  # will fail to load LD_PRELOAD and the container will crash.
+  injector: busybox:latest
+  defaults:
+    rollback:
+      enabled: true
+      # Short grace period for e2e testing (default is 5m).
+      graceTime: 10s
+      # Short stability window for testing (default is 1h).
+      stabilityWindow: 5m
+  rules:
+    - name: catch-all
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://localhost:4318

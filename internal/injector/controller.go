@@ -210,12 +210,18 @@ func (r *InstrumentationReconciler) buildDesiredConfigMaps(ctx context.Context, 
 // resolveNamespaces returns the list of target namespaces. If explicit is empty,
 // returns all existing namespaces except Kubernetes system namespaces (catch-all).
 func (r *InstrumentationReconciler) resolveNamespaces(ctx context.Context, explicit []string) ([]string, error) {
+	return resolveNamespaces(ctx, r.Client, explicit)
+}
+
+// resolveNamespaces returns the list of target namespaces. If explicit is empty,
+// returns all existing namespaces except Kubernetes system namespaces (catch-all).
+func resolveNamespaces(ctx context.Context, c client.Client, explicit []string) ([]string, error) {
 	if len(explicit) > 0 {
 		return explicit, nil
 	}
 
 	var nsList corev1.NamespaceList
-	if err := r.List(ctx, &nsList); err != nil {
+	if err := c.List(ctx, &nsList); err != nil {
 		return nil, fmt.Errorf("listing namespaces: %w", err)
 	}
 
