@@ -209,7 +209,7 @@ InstrumentationSpec
 ### TODO
 
 - [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
-- [ ] **Mode conflict detection e2e test** — build injector from source and verify conflict detection end-to-end (see "Testing mode conflict detection end-to-end" above)
+- [x] **Mode conflict detection e2e test** — `tests/e2e-instrumentation/injector-mode-conflict/` verifies `install` vs `install_unless_conflict` with a foreign `-javaagent`. Runs as part of normal `make e2e-instrumentation`. `container-injector` now builds from source.
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods
 
