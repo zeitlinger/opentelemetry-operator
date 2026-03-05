@@ -208,9 +208,10 @@ InstrumentationSpec
 
 ### TODO
 
-- [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
+- [x] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. Ported to v2alpha1 injector (`c312865e`), v1alpha1 support removed (`e46bede5`)
 - [x] **Mode conflict detection e2e test** — `tests/e2e-instrumentation/injector-mode-conflict/` verifies `install` vs `install_unless_conflict` with a foreign `-javaagent`. Runs as part of normal `make e2e-instrumentation`. `container-injector` now builds from source.
-- [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
+- [ ] **Pod bouncing on CR updates** — When the Instrumentation CR spec changes (new agent image, config update), automatically restart instrumented workloads so they pick up the new config. Uses the same `kubectl.kubernetes.io/restartedAt` pod template annotation as crash-loop rollback. Requires `status.instrumentedWorkloads[]` to know which workloads to restart.
+- [ ] **Operator internal telemetry** (Jack) — export operator metrics (instrumentation status per pod, failures) via Prometheus endpoint on the operator manager (pull-based, idiomatic k8s)
   - **Existing infrastructure to build on:**
     - controller-runtime metrics server on `:8443` `/metrics` — standard reconciliation metrics already exposed
     - CRD metrics via OTel SDK + Prometheus exporter (`apis/v1beta1/metrics.go`, gated by `--enable-cr-metrics`) — use `otelv1beta1.BootstrapMetrics()` pattern
@@ -220,7 +221,8 @@ InstrumentationSpec
     - `otel_injector_injection_total` (counter, labels: namespace, instrumentation_cr, mode, result=success|skipped|error) — injection attempts
     - `otel_injector_conflict_detected_total` (counter, labels: namespace, language) — `install_unless_conflict` back-offs
     - `otel_injector_cr_rule_matches_total` (counter, labels: cr_name, rule_name) — which rules are actually matching
-- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods. See [design discussion](#crash-loop-auto-recovery--design-discussion) below
+- [ ] **Instrumentation status data model** (Gregor) — Add `status.instrumentedWorkloads[]` to CRD. Foundation for crash-loop recovery, pod bouncing, and internal telemetry
+- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods. See [design discussion](#crash-loop-auto-recovery) below
 
 ## Crash-loop auto-recovery
 
