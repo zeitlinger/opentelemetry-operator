@@ -8,7 +8,7 @@ spec:
     - name: myapp
       env:
         - name: LD_PRELOAD
-          value: /otel/libotelinject.so
+          value: /otel/autoinstrumentation/libotelinject.so
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://otel-collector:4318
         - name: OTEL_INJECTOR_SERVICE_NAME
@@ -16,7 +16,10 @@ spec:
       volumeMounts:
         - name: otel-injector
           mountPath: /otel
-  initContainers:
-    - name: otel-injector-init
+          readOnly: true
+  volumes:
+    - name: otel-injector
+      image:
+        reference: busybox:latest
 status:
   phase: Running

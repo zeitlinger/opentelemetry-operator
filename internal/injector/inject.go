@@ -17,23 +17,18 @@ import (
 )
 
 const (
-	initContainerName = "otel-injector-init"
-	volumeName        = "otel-injector"
-	mountPath         = "/otel"
-	ldPreloadPath     = "/otel/libotelinject.so"
-	configFilePath    = "/otel/injector/otelinject.conf"
+	volumeName = "otel-injector"
+	mountPath  = "/otel"
+
+	// Image volumes mount the full image filesystem. The injector and language images
+	// place their files under /autoinstrumentation/ inside the image, so after mounting
+	// at /otel the files are one level deeper than with the old init container cp approach.
+	ldPreloadPath  = "/otel/autoinstrumentation/libotelinject.so"
+	configFilePath = "/otel/autoinstrumentation/injector/otelinject.conf"
 
 	configVolumePrefix = "otel-config-"
 	configMountPath    = "/otel/config"
 	otelConfigFilePath = configMountPath + "/" + configMapDataKey
-
-	// Per-language agent paths after the init container copies /autoinstrumentation/. to /otel.
-	// These match the layouts defined in images/injector-{lang}/ and the otelinject.conf defaults.
-	// Users can override these via the corresponding env vars in config.env.
-	jvmAgentPath    = "/otel/javaagent.jar"
-	nodejsAgentPath = "/otel/register.js"
-	pythonAgentPath = "/otel/python" // prefix; injector appends /glibc or /musl at runtime
-	dotnetAgentPath = "/otel/dotnet" // prefix; injector appends /glibc or /musl at runtime
 
 	envLDPreload                = "LD_PRELOAD"
 	envInjectorConfigFile       = "OTEL_INJECTOR_CONFIG_FILE"
@@ -67,8 +62,8 @@ const (
 )
 
 func isAlreadyInjected(pod corev1.Pod) bool {
-	for _, c := range pod.Spec.InitContainers {
-		if c.Name == initContainerName {
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == volumeName {
 			return true
 		}
 	}
@@ -144,34 +139,32 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			continue
 		}
 
-		// Add the shared volume + init containers on first match.
+		// Add image volumes on first match.
+		// Each image is mounted read-only at its own path — no copying needed.
+		// The injector image mounts at /otel; per-language images mount at /otel-{lang}.
+		// Files land under /autoinstrumentation/ inside each mount because image volumes
+		// expose the full image filesystem rather than just /autoinstrumentation/.
 		if !injectedAny {
 			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 				Name: volumeName,
 				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+					Image: &corev1.ImageVolumeSource{
+						Reference:  inst.Spec.Injector,
+						PullPolicy: corev1.PullIfNotPresent,
+					},
 				},
 			})
-			// Injector init container: copies the injector binary and otelinject.conf.
-			pod.Spec.InitContainers = append(pod.Spec.InitContainers, corev1.Container{
-				Name:    initContainerName,
-				Image:   inst.Spec.Injector,
-				Command: []string{"cp", "-r", "/autoinstrumentation/.", mountPath},
-				VolumeMounts: []corev1.VolumeMount{{
-					Name:      volumeName,
-					MountPath: mountPath,
-				}},
-			})
-			// Per-language init containers: each copies its agent files into the shared volume.
-			pod.Spec.InitContainers = append(pod.Spec.InitContainers,
-				buildLangInitContainers(inst.Spec, volumeName, mountPath)...)
+			pod.Spec.Volumes = append(pod.Spec.Volumes,
+				buildLangImageVolumes(inst.Spec)...)
 			injectedAny = true
 		}
 
 		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
 			Name:      volumeName,
 			MountPath: mountPath,
+			ReadOnly:  true,
 		})
+		c.VolumeMounts = append(c.VolumeMounts, buildLangVolumeMounts(inst.Spec)...)
 
 		// Mount declarative config ConfigMap if present.
 		if rule.Config.DeclarativeConfig != nil {
@@ -286,29 +279,21 @@ func validateRuleEnv(rule v2alpha1.Rule) error {
 //   - OTEL_SERVICE_NAME: SDK reads it directly, ignores resource attrs
 //   - OTEL_RESOURCE_ATTRIBUTES with service.name: injector preserves it
 //   - OTEL_INJECTOR_SERVICE_NAME: operator-derived fallback from owner refs
-// buildLangEnvVars returns env vars that tell the injector where to find each language's agent.
-// These are set when per-language images are configured via spec.{java,nodejs,python,dotnet}.
-// Users can override any of these in config.env — appendIfNotSet semantics apply.
-func buildLangEnvVars(spec v2alpha1.InstrumentationSpec) []corev1.EnvVar {
-	var envs []corev1.EnvVar
-	if spec.Java != "" {
-		envs = append(envs, corev1.EnvVar{Name: envJVMAgentPath, Value: jvmAgentPath})
-	}
-	if spec.NodeJS != "" {
-		envs = append(envs, corev1.EnvVar{Name: envNodejsAgentPath, Value: nodejsAgentPath})
-	}
-	if spec.Python != "" {
-		envs = append(envs, corev1.EnvVar{Name: envPythonAgentPath, Value: pythonAgentPath})
-	}
-	if spec.DotNet != "" {
-		envs = append(envs, corev1.EnvVar{Name: envDotnetAgentPath, Value: dotnetAgentPath})
-	}
-	return envs
+// langVolumeName returns the volume name for a per-language image volume.
+func langVolumeName(lang string) string {
+	return volumeName + "-" + lang
 }
 
-// buildLangInitContainers returns one init container per configured language image.
-// Each copies /autoinstrumentation/. to the shared volume, adding that language's agent files.
-func buildLangInitContainers(spec v2alpha1.InstrumentationSpec, volName, mntPath string) []corev1.Container {
+// langMountPath returns the mount path for a per-language image volume.
+// Each language gets its own mount path to avoid collisions with the injector volume.
+func langMountPath(lang string) string {
+	return mountPath + "-" + lang
+}
+
+// buildLangImageVolumes returns one image volume per configured language.
+// Each is mounted at its own path (/otel-{lang}) so they don't conflict with each other
+// or the injector volume at /otel.
+func buildLangImageVolumes(spec v2alpha1.InstrumentationSpec) []corev1.Volume {
 	type langImage struct {
 		name  string
 		image string
@@ -319,22 +304,81 @@ func buildLangInitContainers(spec v2alpha1.InstrumentationSpec, volName, mntPath
 		{"python", spec.Python},
 		{"dotnet", spec.DotNet},
 	}
-	var containers []corev1.Container
+	var volumes []corev1.Volume
 	for _, lang := range langs {
 		if lang.image == "" {
 			continue
 		}
-		containers = append(containers, corev1.Container{
-			Name:    initContainerName + "-" + lang.name,
-			Image:   lang.image,
-			Command: []string{"cp", "-r", "/autoinstrumentation/.", mntPath},
-			VolumeMounts: []corev1.VolumeMount{{
-				Name:      volName,
-				MountPath: mntPath,
-			}},
+		volumes = append(volumes, corev1.Volume{
+			Name: langVolumeName(lang.name),
+			VolumeSource: corev1.VolumeSource{
+				Image: &corev1.ImageVolumeSource{
+					Reference:  lang.image,
+					PullPolicy: corev1.PullIfNotPresent,
+				},
+			},
 		})
 	}
-	return containers
+	return volumes
+}
+
+// buildLangVolumeMounts returns volume mounts for all configured per-language image volumes.
+func buildLangVolumeMounts(spec v2alpha1.InstrumentationSpec) []corev1.VolumeMount {
+	type langImage struct {
+		name  string
+		image string
+	}
+	langs := []langImage{
+		{"java", spec.Java},
+		{"nodejs", spec.NodeJS},
+		{"python", spec.Python},
+		{"dotnet", spec.DotNet},
+	}
+	var mounts []corev1.VolumeMount
+	for _, lang := range langs {
+		if lang.image == "" {
+			continue
+		}
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      langVolumeName(lang.name),
+			MountPath: langMountPath(lang.name),
+			ReadOnly:  true,
+		})
+	}
+	return mounts
+}
+
+// buildLangEnvVars returns env vars that tell the injector where to find each language's agent.
+// With image volumes the full image filesystem is mounted, so files are under /autoinstrumentation/
+// inside the per-language mount path.
+// Users can override any of these in config.env — appendIfNotSet semantics apply.
+func buildLangEnvVars(spec v2alpha1.InstrumentationSpec) []corev1.EnvVar {
+	var envs []corev1.EnvVar
+	if spec.Java != "" {
+		envs = append(envs, corev1.EnvVar{
+			Name:  envJVMAgentPath,
+			Value: langMountPath("java") + "/autoinstrumentation/javaagent.jar",
+		})
+	}
+	if spec.NodeJS != "" {
+		envs = append(envs, corev1.EnvVar{
+			Name:  envNodejsAgentPath,
+			Value: langMountPath("nodejs") + "/autoinstrumentation/register.js",
+		})
+	}
+	if spec.Python != "" {
+		envs = append(envs, corev1.EnvVar{
+			Name:  envPythonAgentPath,
+			Value: langMountPath("python") + "/autoinstrumentation/python",
+		})
+	}
+	if spec.DotNet != "" {
+		envs = append(envs, corev1.EnvVar{
+			Name:  envDotnetAgentPath,
+			Value: langMountPath("dotnet") + "/autoinstrumentation/dotnet",
+		})
+	}
+	return envs
 }
 
 func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference, langEnvVars []corev1.EnvVar, mode v2alpha1.InstrumentationMode) []corev1.EnvVar {

@@ -196,14 +196,21 @@ func TestMutate_AlreadyInjectedSkips(t *testing.T) {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "test"},
 		Spec: corev1.PodSpec{
-			InitContainers: []corev1.Container{{Name: initContainerName}},
-			Containers:     []corev1.Container{{Name: "app"}},
+			Volumes: []corev1.Volume{
+				{
+					Name: volumeName,
+					VolumeSource: corev1.VolumeSource{
+						Image: &corev1.ImageVolumeSource{Reference: "injector:latest"},
+					},
+				},
+			},
+			Containers: []corev1.Container{{Name: "app"}},
 		},
 	}
 
 	result, err := pm.Mutate(context.Background(), ns, pod)
 	require.NoError(t, err)
-	// Should not add a second init container
-	assert.Len(t, result.Spec.InitContainers, 1)
+	// Should not add another image volume
+	assert.Len(t, result.Spec.Volumes, 1)
 	assert.Empty(t, result.Spec.Containers[0].Env)
 }

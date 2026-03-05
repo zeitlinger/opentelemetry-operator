@@ -48,20 +48,20 @@ func TestInjectPod_Basic(t *testing.T) {
 
 	result := mustInjectPod(t, inst, pod, "default")
 
-	// Init container added
-	require.Len(t, result.Spec.InitContainers, 1)
-	assert.Equal(t, initContainerName, result.Spec.InitContainers[0].Name)
-	assert.Equal(t, "ghcr.io/example/otel-injector:latest", result.Spec.InitContainers[0].Image)
-	assert.Equal(t, []string{"cp", "-r", "/autoinstrumentation/.", mountPath}, result.Spec.InitContainers[0].Command)
+	// No init containers — image volumes replace the copy approach.
+	assert.Empty(t, result.Spec.InitContainers)
 
-	// Volume added
+	// Image volume added for the injector.
 	require.Len(t, result.Spec.Volumes, 1)
 	assert.Equal(t, volumeName, result.Spec.Volumes[0].Name)
-	assert.NotNil(t, result.Spec.Volumes[0].EmptyDir)
+	require.NotNil(t, result.Spec.Volumes[0].Image)
+	assert.Equal(t, "ghcr.io/example/otel-injector:latest", result.Spec.Volumes[0].Image.Reference)
+	assert.Equal(t, corev1.PullIfNotPresent, result.Spec.Volumes[0].Image.PullPolicy)
 
-	// Container has volume mount
+	// Container has volume mount (read-only)
 	require.Len(t, result.Spec.Containers[0].VolumeMounts, 1)
 	assert.Equal(t, mountPath, result.Spec.Containers[0].VolumeMounts[0].MountPath)
+	assert.True(t, result.Spec.Containers[0].VolumeMounts[0].ReadOnly)
 
 	// Check env vars
 	envMap := envToMap(result.Spec.Containers[0].Env)
@@ -112,7 +112,7 @@ func TestInjectPod_RuleMatchesByNamespace(t *testing.T) {
 	// Should not match — pod is in "default", rule targets "production"
 	result := mustInjectPod(t, inst, pod, "default")
 	assert.Empty(t, result.Spec.Containers[0].Env)
-	assert.Empty(t, result.Spec.InitContainers)
+	assert.Empty(t, result.Spec.Volumes)
 
 	// Should match
 	result = mustInjectPod(t, inst, pod, "production")
@@ -430,12 +430,12 @@ func TestInjectPod_CatchAllSkipsSystemNamespaces(t *testing.T) {
 	// kube-system should be skipped by catch-all rules
 	result := mustInjectPod(t, inst, pod, "kube-system")
 	assert.Empty(t, result.Spec.Containers[0].Env)
-	assert.Empty(t, result.Spec.InitContainers)
+	assert.Empty(t, result.Spec.Volumes)
 
 	// kube-public too
 	result = mustInjectPod(t, inst, pod, "kube-public")
 	assert.Empty(t, result.Spec.Containers[0].Env)
-	assert.Empty(t, result.Spec.InitContainers)
+	assert.Empty(t, result.Spec.Volumes)
 
 	// Normal namespace should still match
 	result = mustInjectPod(t, inst, pod, "default")
@@ -480,11 +480,18 @@ func TestInjectPod_NoMatchingRules(t *testing.T) {
 	assert.Empty(t, result.Spec.Volumes)
 }
 
-func TestIsAlreadyInjected_InitContainer(t *testing.T) {
+func TestIsAlreadyInjected_ImageVolume(t *testing.T) {
 	pod := corev1.Pod{
 		Spec: corev1.PodSpec{
-			InitContainers: []corev1.Container{
-				{Name: initContainerName},
+			Volumes: []corev1.Volume{
+				{
+					Name: volumeName,
+					VolumeSource: corev1.VolumeSource{
+						Image: &corev1.ImageVolumeSource{
+							Reference: "injector:latest",
+						},
+					},
+				},
 			},
 		},
 	}
@@ -1044,7 +1051,7 @@ func countEnv(envs []corev1.EnvVar, name string) int {
 	return n
 }
 
-func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
+func TestInjectPod_PerLanguageImageVolumes(t *testing.T) {
 	javaImg := "java-agent:latest"
 	nodejsImg := "nodejs-agent:latest"
 	inst := &v2alpha1.Instrumentation{
@@ -1062,26 +1069,31 @@ func TestInjectPod_PerLanguageInitContainers(t *testing.T) {
 
 	result := mustInjectPod(t, inst, pod, "default")
 
-	// Composite + java + nodejs = 3 init containers, in that order.
-	require.Len(t, result.Spec.InitContainers, 3)
-	assert.Equal(t, initContainerName, result.Spec.InitContainers[0].Name)
-	assert.Equal(t, "injector:latest", result.Spec.InitContainers[0].Image)
-	assert.Equal(t, initContainerName+"-java", result.Spec.InitContainers[1].Name)
-	assert.Equal(t, javaImg, result.Spec.InitContainers[1].Image)
-	assert.Equal(t, initContainerName+"-nodejs", result.Spec.InitContainers[2].Name)
-	assert.Equal(t, nodejsImg, result.Spec.InitContainers[2].Image)
+	// No init containers — image volumes replace the copy approach.
+	assert.Empty(t, result.Spec.InitContainers)
 
-	// All init containers use the same command and volume mount.
-	for _, ic := range result.Spec.InitContainers {
-		assert.Equal(t, []string{"cp", "-r", "/autoinstrumentation/.", mountPath}, ic.Command)
-		require.Len(t, ic.VolumeMounts, 1)
-		assert.Equal(t, volumeName, ic.VolumeMounts[0].Name)
-	}
+	// Injector image volume + java + nodejs = 3 volumes.
+	require.Len(t, result.Spec.Volumes, 3)
+	assert.Equal(t, volumeName, result.Spec.Volumes[0].Name)
+	require.NotNil(t, result.Spec.Volumes[0].Image)
+	assert.Equal(t, "injector:latest", result.Spec.Volumes[0].Image.Reference)
+	assert.Equal(t, langVolumeName("java"), result.Spec.Volumes[1].Name)
+	require.NotNil(t, result.Spec.Volumes[1].Image)
+	assert.Equal(t, javaImg, result.Spec.Volumes[1].Image.Reference)
+	assert.Equal(t, langVolumeName("nodejs"), result.Spec.Volumes[2].Name)
+	require.NotNil(t, result.Spec.Volumes[2].Image)
+	assert.Equal(t, nodejsImg, result.Spec.Volumes[2].Image.Reference)
 
-	// Lang path env vars are injected into the app container.
+	// App container has injector mount + per-language mounts.
+	require.Len(t, result.Spec.Containers[0].VolumeMounts, 3)
+	assert.Equal(t, mountPath, result.Spec.Containers[0].VolumeMounts[0].MountPath)
+	assert.Equal(t, langMountPath("java"), result.Spec.Containers[0].VolumeMounts[1].MountPath)
+	assert.Equal(t, langMountPath("nodejs"), result.Spec.Containers[0].VolumeMounts[2].MountPath)
+
+	// Lang path env vars point into the per-language mount paths under /autoinstrumentation/.
 	envMap := envToMap(result.Spec.Containers[0].Env)
-	assert.Equal(t, jvmAgentPath, envMap[envJVMAgentPath])
-	assert.Equal(t, nodejsAgentPath, envMap[envNodejsAgentPath])
+	assert.Equal(t, langMountPath("java")+"/autoinstrumentation/javaagent.jar", envMap[envJVMAgentPath])
+	assert.Equal(t, langMountPath("nodejs")+"/autoinstrumentation/register.js", envMap[envNodejsAgentPath])
 	// python/dotnet not configured — should not be set.
 	assert.Empty(t, envMap[envPythonAgentPath])
 	assert.Empty(t, envMap[envDotnetAgentPath])
@@ -1130,8 +1142,9 @@ func TestInjectPod_NoPerLanguageImages_NoLangEnvVars(t *testing.T) {
 
 	result := mustInjectPod(t, inst, pod, "default")
 
-	// Only the composite init container — no per-language containers.
-	require.Len(t, result.Spec.InitContainers, 1)
+	// Only the injector image volume — no per-language volumes.
+	require.Len(t, result.Spec.Volumes, 1)
+	assert.Empty(t, result.Spec.InitContainers)
 
 	// No per-language env vars — otelinject.conf defaults apply.
 	envMap := envToMap(result.Spec.Containers[0].Env)
