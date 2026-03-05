@@ -55,6 +55,7 @@ func NewRollbackReconciler(c client.Client, scheme *runtime.Scheme, log logr.Log
 // SetupWithManager registers the controller.
 func (r *RollbackReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		Named("instrumentation-rollback").
 		For(&v2alpha1.Instrumentation{}).
 		Watches(
 			&corev1.Pod{},

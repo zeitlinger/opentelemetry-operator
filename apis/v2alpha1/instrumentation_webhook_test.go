@@ -204,7 +204,7 @@ func TestValidate_InvalidMode(t *testing.T) {
 	bad := InstrumentationMode("Bogus")
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Rules: []Rule{
 				{
 					Name:   "bad-mode",
@@ -223,7 +223,7 @@ func TestValidate_InvalidDefaultsMode(t *testing.T) {
 	bad := InstrumentationMode("Bogus")
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Defaults: InstrumentationDefaults{Mode: &bad},
 			Rules:    []Rule{{Name: "ok"}},
 		},
@@ -285,6 +285,50 @@ func TestValidate_DeleteAlwaysAllowed(t *testing.T) {
 
 	w := InstrumentationWebhookV2{}
 	_, err := w.ValidateDelete(context.Background(), inst)
+	assert.NoError(t, err)
+}
+
+func TestValidate_ImageVolumesNotSupported_BlocksCreate(t *testing.T) {
+	inst := &Instrumentation{
+		Spec: InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []Rule{{Name: "catch-all"}},
+		},
+	}
+
+	w := InstrumentationWebhookV2{imageVolumeBlockedReason: "node kind-control-plane has containerd 1.7.23 which is below the minimum required 2.1"}
+	_, err := w.ValidateCreate(context.Background(), inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot create Instrumentation")
+	assert.Contains(t, err.Error(), "kind-control-plane")
+}
+
+func TestValidate_ImageVolumesNotSupported_BlocksUpdate(t *testing.T) {
+	inst := &Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []Rule{{Name: "catch-all"}},
+		},
+	}
+
+	w := InstrumentationWebhookV2{imageVolumeBlockedReason: "Kubernetes server version 1.31 is below minimum"}
+	_, err := w.ValidateUpdate(context.Background(), inst, inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot update Instrumentation")
+}
+
+func TestValidate_ImageVolumesSupported_AllowsCreate(t *testing.T) {
+	inst := &Instrumentation{
+		Spec: InstrumentationSpec{
+			Injector: "injector:latest",
+			Rules:    []Rule{{Name: "catch-all"}},
+		},
+	}
+
+	// Zero value = empty blocked reason = supported.
+	w := InstrumentationWebhookV2{}
+	_, err := w.ValidateCreate(context.Background(), inst)
 	assert.NoError(t, err)
 }
 

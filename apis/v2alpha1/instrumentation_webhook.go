@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -18,17 +19,30 @@ import (
 // +kubebuilder:webhook:verbs=delete,path=/validate-opentelemetry-io-v2alpha1-instrumentation,mutating=false,failurePolicy=ignore,groups=opentelemetry.io,resources=instrumentations,versions=v2alpha1,name=vinstrumentationv2delete.kb.io,sideEffects=none,admissionReviewVersions=v1
 // +kubebuilder:object:generate=false
 
-type InstrumentationWebhookV2 struct{}
+// InstrumentationWebhookV2 validates v2alpha1 Instrumentation CRs.
+// imageVolumeBlockedReason is non-empty when the cluster does not meet the
+// requirements for image volumes (Kubernetes 1.32+ and containerd 2.1+).
+// An empty string means image volumes are supported and CRs may be created.
+type InstrumentationWebhookV2 struct {
+	log                      logr.Logger
+	imageVolumeBlockedReason string
+}
 
 var _ admission.CustomValidator = &InstrumentationWebhookV2{}
 
 // dnsLabelRegexp matches valid DNS label characters (lowercase alphanum + hyphens, no leading/trailing hyphen).
 var dnsLabelRegexp = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
-func SetupInstrumentationWebhook(mgr ctrl.Manager) error {
+// SetupInstrumentationWebhook registers the v2alpha1 Instrumentation validator.
+// imageVolumeBlockedReason is forwarded from injector.CheckImageVolumeSupport:
+// if non-empty, all create/update requests are rejected with that reason.
+func SetupInstrumentationWebhook(mgr ctrl.Manager, imageVolumeBlockedReason string) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(&Instrumentation{}).
-		WithValidator(&InstrumentationWebhookV2{}).
+		WithValidator(&InstrumentationWebhookV2{
+			log:                      ctrl.Log.WithName("webhook").WithName("Instrumentation"),
+			imageVolumeBlockedReason: imageVolumeBlockedReason,
+		}).
 		Complete()
 }
 
@@ -37,6 +51,11 @@ func (w InstrumentationWebhookV2) ValidateCreate(_ context.Context, obj runtime.
 	if !ok {
 		return nil, fmt.Errorf("expected an Instrumentation, received %T", obj)
 	}
+	if w.imageVolumeBlockedReason != "" {
+		w.log.Info("rejected Instrumentation create: image volumes not supported",
+			"name", inst.Name, "reason", w.imageVolumeBlockedReason)
+		return nil, fmt.Errorf("cannot create Instrumentation: %s", w.imageVolumeBlockedReason)
+	}
 	return validate(inst)
 }
 
@@ -44,6 +63,11 @@ func (w InstrumentationWebhookV2) ValidateUpdate(_ context.Context, _, newObj ru
 	inst, ok := newObj.(*Instrumentation)
 	if !ok {
 		return nil, fmt.Errorf("expected an Instrumentation, received %T", newObj)
+	}
+	if w.imageVolumeBlockedReason != "" {
+		w.log.Info("rejected Instrumentation update: image volumes not supported",
+			"name", inst.Name, "reason", w.imageVolumeBlockedReason)
+		return nil, fmt.Errorf("cannot update Instrumentation: %s", w.imageVolumeBlockedReason)
 	}
 	return validate(inst)
 }

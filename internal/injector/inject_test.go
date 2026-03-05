@@ -240,7 +240,7 @@ func TestInjectPod_ModeInstall(t *testing.T) {
 	install := v2alpha1.InstrumentationModeInstall
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Rules: []v2alpha1.Rule{
 				{
 					Name:   "force-install",
@@ -266,7 +266,7 @@ func TestInjectPod_ModeInstall(t *testing.T) {
 func TestInjectPod_DefaultModeIsInstallUnlessConflict(t *testing.T) {
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},
 	}
@@ -288,7 +288,7 @@ func TestInjectPod_CRDefaultModeOverriddenByRule(t *testing.T) {
 	install := v2alpha1.InstrumentationModeInstall
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Defaults: v2alpha1.InstrumentationDefaults{Mode: &skip},
 			Rules: []v2alpha1.Rule{
 				{
@@ -317,7 +317,7 @@ func TestInjectPod_CRDefaultModeAppliesWhenRuleUnset(t *testing.T) {
 	install := v2alpha1.InstrumentationModeInstall
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
-			Injector: "sdk:latest",
+			Injector: "injector:latest",
 			Defaults: v2alpha1.InstrumentationDefaults{Mode: &install},
 			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
 		},

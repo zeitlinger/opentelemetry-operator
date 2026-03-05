@@ -399,6 +399,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Check whether the cluster supports image volumes (K8s 1.32+ and containerd 2.1+
+	// on all nodes). The result is cached for the lifetime of the operator and passed
+	// to the v2alpha1 Instrumentation admission webhook.
+	imageVolumeBlockedReason := injector.CheckImageVolumeSupport(context.Background(), setupLog.WithName("image-volume-compat"), clientset)
+
 	if cfg.EnableWebhooks {
 		var crdMetrics *otelv1beta1.Metrics
 
@@ -453,7 +458,7 @@ func main() {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Instrumentation")
 			os.Exit(1)
 		}
-		if err = otelv2alpha1.SetupInstrumentationWebhook(mgr); err != nil {
+		if err = otelv2alpha1.SetupInstrumentationWebhook(mgr, imageVolumeBlockedReason); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "Instrumentation v2alpha1")
 			os.Exit(1)
 		}
