@@ -238,7 +238,7 @@ func TestInjectNodeJSSDK(t *testing.T) {
 				containers = append(containers, &pod.Spec.InitContainers[i])
 			}
 
-			err := injectNodeJSSDK(test.NodeJS, &pod, containers, v1alpha1.InstrumentationSpec{}, false)
+			err := injectNodeJSSDK(test.NodeJS, &pod, containers, v1alpha1.InstrumentationSpec{})
 			if err != nil {
 				assert.Equal(t, test.expected, pod)
 				assert.Equal(t, test.err, err)

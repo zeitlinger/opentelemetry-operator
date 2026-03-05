@@ -68,7 +68,6 @@ func (p *podMutationWebhook) Handle(ctx context.Context, req admission.Request) 
 	ns := corev1.Namespace{}
 	err = p.client.Get(ctx, types.NamespacedName{Name: req.Namespace, Namespace: ""}, &ns)
 	if err != nil {
-		p.logger.Error(err, "failed to get namespace, skipping pod mutation", "namespace", req.Namespace)
 		res := admission.Errored(http.StatusInternalServerError, err)
 		// By default, admission.Errored sets Allowed to false which blocks pod creation even though the failurePolicy=ignore.
 		// Allowed set to true makes sure failure does not block pod creation in case of an error.
@@ -82,7 +81,6 @@ func (p *podMutationWebhook) Handle(ctx context.Context, req admission.Request) 
 	for _, m := range p.podMutators {
 		pod, err = m.Mutate(ctx, ns, pod)
 		if err != nil {
-			p.logger.Error(err, "pod mutator failed, skipping pod mutation")
 			res := admission.Errored(http.StatusInternalServerError, err)
 			res.Allowed = true
 			return res

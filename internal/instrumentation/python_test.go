@@ -857,7 +857,7 @@ func TestInjectPythonSDK(t *testing.T) {
 			// Collect all containers (regular first, then init)
 			containers := allContainers(&pod)
 
-			err := injectPythonSDK(test.Python, &pod, containers, test.platform, v1alpha1.InstrumentationSpec{}, false)
+			err := injectPythonSDK(test.Python, &pod, containers, test.platform, v1alpha1.InstrumentationSpec{})
 			if err != nil {
 				assert.Equal(t, test.expected, pod)
 				assert.Equal(t, test.err, err)

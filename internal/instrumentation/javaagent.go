@@ -40,17 +40,11 @@ func injectJavaagentToContainer(javaSpec v1alpha1.Java, container *corev1.Contai
 	return nil
 }
 
-func injectJavaagentToPod(javaSpec v1alpha1.Java, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) corev1.Pod {
-	// We just inject Volumes and init containers for the first processed container.
-	if useImageVolume {
-		if isVolumeMissing(pod, javaVolumeName) {
-			pod.Spec.Volumes = append(pod.Spec.Volumes, instrImageVolume(javaVolumeName, javaSpec.Image, instSpec.ImagePullPolicy))
-		}
-		return pod
-	}
+func injectJavaagentToPod(javaSpec v1alpha1.Java, pod corev1.Pod, firstContainerName string, instSpec v1alpha1.InstrumentationSpec) corev1.Pod {
+	volume := instrVolume(javaSpec.VolumeClaimTemplate, javaVolumeName, javaSpec.VolumeSizeLimit)
 
+	// We just inject Volumes and init containers for the first processed container.
 	if isInitContainerMissing(pod, javaInitContainerName) {
-		volume := instrVolume(javaSpec.VolumeClaimTemplate, javaVolumeName, javaSpec.VolumeSizeLimit)
 		pod.Spec.Volumes = append(pod.Spec.Volumes, volume)
 
 		initContainer := corev1.Container{
@@ -86,14 +80,14 @@ func injectJavaagentToPod(javaSpec v1alpha1.Java, pod corev1.Pod, firstContainer
 
 // injectJavaagent injects Java instrumentation into the specified containers.
 // Containers must point into the provided pod and be ordered with init containers first.
-func injectJavaagent(javaSpec v1alpha1.Java, pod *corev1.Pod, containers []*corev1.Container, instSpec v1alpha1.InstrumentationSpec, useImageVolume bool) error {
+func injectJavaagent(javaSpec v1alpha1.Java, pod *corev1.Pod, containers []*corev1.Container, instSpec v1alpha1.InstrumentationSpec) error {
 	for _, container := range containers {
 		if err := injectJavaagentToContainer(javaSpec, container); err != nil {
 			return err
 		}
 	}
 	if len(containers) > 0 {
-		*pod = injectJavaagentToPod(javaSpec, *pod, containers[0].Name, instSpec, useImageVolume)
+		*pod = injectJavaagentToPod(javaSpec, *pod, containers[0].Name, instSpec)
 	}
 	return nil
 }

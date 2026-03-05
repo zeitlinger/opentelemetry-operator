@@ -41,7 +41,6 @@ type AutoDetect interface {
 	OpAmpBridgeAvailablity() (opampbridge.Availability, error)
 	FIPSEnabled(ctx context.Context) bool
 	NativeSidecarSupport() (bool, error)
-	ImageVolumeSupport() (bool, error)
 }
 
 type k8sVersionDiscovery interface {
@@ -279,18 +278,6 @@ func (a *autoDetect) NativeSidecarSupport() (bool, error) {
 	return currentVersion.AtLeast(minimumVersion), nil
 }
 
-// ImageVolumeSupport checks if image volumes are available.
-// This requires Kubernetes version >= 1.31 (when image volumes became available).
-func (a *autoDetect) ImageVolumeSupport() (bool, error) {
-	currentVersion, err := a.k8sDetector.GetKubernetesVersion()
-	if err != nil {
-		return false, err
-	}
-
-	minimumVersion := version.MustParseGeneric("1.31.0")
-	return currentVersion.AtLeast(minimumVersion), nil
-}
-
 // ApplyAutoDetect attempts to automatically detect relevant information for this operator.
 func ApplyAutoDetect(autoDetect AutoDetect, c *config.Config, logger logr.Logger) error {
 	logger.V(2).Info("auto-detecting the configuration based on the environment")
@@ -351,14 +338,6 @@ func ApplyAutoDetect(autoDetect AutoDetect, c *config.Config, logger logr.Logger
 	}
 	c.Internal.NativeSidecarSupport = nativeSidecarSupport
 	logger.V(2).Info("determined native sidecar support", "availability", c.Internal.NativeSidecarSupport)
-
-	imageVolumeSupport, err := autoDetect.ImageVolumeSupport()
-	if err != nil {
-		logger.V(2).Info("failed to detect image volume support", "reason", err)
-		return err
-	}
-	c.Internal.ImageVolumeSupport = imageVolumeSupport
-	logger.V(2).Info("determined image volume support", "availability", c.Internal.ImageVolumeSupport)
 
 	return nil
 }
