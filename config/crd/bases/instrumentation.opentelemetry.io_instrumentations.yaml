@@ -35,6 +35,15 @@ spec:
             type: object
           spec:
             properties:
+              defaults:
+                properties:
+                  mode:
+                    enum:
+                    - Install
+                    - Skip
+                    - InstallUnlessConflict
+                    type: string
+                type: object
               dotnet:
                 type: string
               injector:
@@ -54,8 +63,6 @@ spec:
                       properties:
                         declarativeConfig:
                           x-kubernetes-preserve-unknown-fields: true
-                        disabled:
-                          type: boolean
                         env:
                           items:
                             properties:
@@ -139,6 +146,12 @@ spec:
                             - name
                             type: object
                           type: array
+                        mode:
+                          enum:
+                          - Install
+                          - Skip
+                          - InstallUnlessConflict
+                          type: string
                       type: object
                     name:
                       type: string

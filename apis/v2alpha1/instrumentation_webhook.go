@@ -61,7 +61,17 @@ func validate(inst *Instrumentation) (admission.Warnings, error) {
 		errs = append(errs, "spec.injector must be non-empty")
 	}
 
-	// 2. Duplicate rule names.
+	// 2. Defaults mode validation.
+	if inst.Spec.Defaults.Mode != nil {
+		switch *inst.Spec.Defaults.Mode {
+		case InstrumentationModeInstall, InstrumentationModeSkip, InstrumentationModeInstallUnlessConflict:
+			// valid
+		default:
+			errs = append(errs, fmt.Sprintf("spec.defaults.mode: invalid mode %q (must be Install, Skip, or InstallUnlessConflict)", *inst.Spec.Defaults.Mode))
+		}
+	}
+
+	// 3. Duplicate rule names.
 	seen := map[string]bool{}
 	for i, rule := range inst.Spec.Rules {
 		if rule.Name == "" {
@@ -104,9 +114,19 @@ func validate(inst *Instrumentation) (admission.Warnings, error) {
 			}
 		}
 
-		// 6. Disabled + declarativeConfig conflict.
-		if rule.Config.Disabled && rule.Config.DeclarativeConfig != nil {
-			errs = append(errs, fmt.Sprintf("%s: disabled rule must not have declarativeConfig (config would be created but never mounted)", prefix))
+		// 6. Mode validation.
+		if rule.Config.Mode != nil {
+			switch *rule.Config.Mode {
+			case InstrumentationModeInstall, InstrumentationModeSkip, InstrumentationModeInstallUnlessConflict:
+				// valid
+			default:
+				errs = append(errs, fmt.Sprintf("%s: invalid mode %q (must be Install, Skip, or InstallUnlessConflict)", prefix, *rule.Config.Mode))
+			}
+		}
+
+		// 7. Skip + declarativeConfig conflict.
+		if rule.Config.Mode != nil && *rule.Config.Mode == InstrumentationModeSkip && rule.Config.DeclarativeConfig != nil {
+			errs = append(errs, fmt.Sprintf("%s: mode Skip must not have declarativeConfig (config would be created but never mounted)", prefix))
 		}
 	}
 

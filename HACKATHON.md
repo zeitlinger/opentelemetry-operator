@@ -123,8 +123,7 @@ InstrumentationSpec
 
 ### TODO
 
-- [ ] **System namespace skip policy** — `isSystemNamespace` currently only skips `kube-*` prefixed namespaces; decide whether to expand to other well-known system namespaces (`cert-manager`, `*-system`) or keep the explicit `disabled: true` rule as the intended opt-out mechanism
-- [ ] **Tri-state `config.mode`** (Jack) — replace `disabled: bool` with `InstrumentationMode` enum (`Install`/`Skip`/`InstallUnlessConflict`), add `spec.defaults.mode`. See task details below
+- [x] **Tri-state `config.mode`** — replaced `disabled: bool` with `InstrumentationMode` enum (`Install`/`Skip`/`InstallUnlessConflict`), added `spec.defaults.mode` with rule-level override. Injector receives resolved mode via `OTEL_INJECTOR_MODE` env var
 - [x] **Temporary language-specific images** — per-language injector images (`injector-java`, `injector-nodejs`, `injector-python`, `injector-dotnet`) built and tested end-to-end (Java traces confirmed in collector)
 - [x] **Per-language agent init containers** — implemented in `inject.go`; per-language init containers added when `spec.java/nodejs/python/dotnet` are set; verified working
 - [x] **SDK path env var overrides** — `JVM_AUTO_INSTRUMENTATION_AGENT_PATH`, `NODEJS_AUTO_INSTRUMENTATION_AGENT_PATH`, `PYTHON_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX`, `DOTNET_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX` injected into containers when per-language images are configured
@@ -177,6 +176,42 @@ Reject invalid CRs at admission time. Follow the pattern in `apis/v1alpha1/instr
 - `apis/v2alpha1/instrumentation_webhook.go` — new, implement `ValidateCreate`/`ValidateUpdate`/`ValidateDelete`
 - `apis/v2alpha1/instrumentation_webhook_test.go` — new
 - `main.go` — register with `otelv2alpha1.SetupInstrumentationWebhook(mgr, cfg)`
+
+### Injector-side mode implementation (`opentelemetry-injector`)
+
+The operator passes `OTEL_INJECTOR_MODE` to the injector binary. Values are lowercase to match injector env var conventions: `install`, `skip`, `install_unless_conflict`.
+
+**`config.zig`:**
+- Add `mode` field to config struct (enum: `install`, `skip`, `install_unless_conflict`)
+- Read from `OTEL_INJECTOR_MODE` env var, default `install_unless_conflict`
+- Config file key: `mode`
+
+**`root.zig`:**
+- After config read + allow/deny evaluation, branch on mode:
+  - `skip` → return early, log "mode=skip, skipping injection"
+  - `install` → set `force` flag, pass to language modules. **Expert option** — forces injection even over existing instrumentation. Log at warn level what was overwritten.
+  - `install_unless_conflict` → set `detect_conflicts` flag, pass to language modules
+
+**Per-language conflict detection (`install_unless_conflict` mode):**
+
+| Language | Conflict signal | Behavior |
+|----------|----------------|----------|
+| **JVM** (`jvm.zig`) | Any existing `-javaagent:` in `JAVA_TOOL_OPTIONS` with a *different* path | Always back off — a foreign agent is present |
+| **Python** (`python.zig`) | Foreign paths in `PYTHONPATH` pointing to OTel SDK packages, or existing `sitecustomize.py` that isn't ours | Back off |
+| **.NET** (`dotnet.zig`) | `CORECLR_ENABLE_PROFILING=1` already set with a different `CORECLR_PROFILER` GUID | Back off — only one profiler can run |
+| **Node.js** (`nodejs.zig`) | Existing `--require` in `NODE_OPTIONS` pointing to OTel SDK | Back off (incomplete — needs upstream work, see Nikola's note) |
+
+**`install` (force) mode:**
+- Skip double-injection checks — overwrite existing values
+- Log at warn level: "mode=install, forcing injection over existing {details}"
+
+**Logging/reporting:**
+- Log at info level when conflict detected and backing off
+- Log at warn level when `mode=install` forces over existing instrumentation
+
+**Reference:** Beyla's `scanner.go` detects languages via `/proc/PID/maps` (`libjvm.so`, `libcoreclr.so`, `node`, `python`) and tracks SDK versions via `BEYLA_INJECTOR_SDK_PKG_VERSION`. Different approach (process inspection vs env var checks) but useful reference for future runtime detection.
+
+**Files:** `src/config.zig`, `src/root.zig`, `src/python.zig`, `src/jvm.zig`, `src/nodejs.zig`, `src/dotnet.zig`
 
 ## v1alpha1 comparison
 

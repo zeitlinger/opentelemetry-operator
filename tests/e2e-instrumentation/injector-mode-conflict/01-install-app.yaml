@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-app-with-agent
+spec:
+  selector:
+    matchLabels:
+      app: java-app-with-agent
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: java-app-with-agent
+    spec:
+      containers:
+        - name: myapp
+          # A minimal JVM image — the JVM reads JAVA_TOOL_OPTIONS on startup.
+          # We use eclipse-temurin because it's a standard JVM image.
+          image: eclipse-temurin:21-jre-alpine
+          command:
+            - /bin/sh
+            - -c
+            # Print final JAVA_TOOL_OPTIONS to stdout so we can assert on it,
+            # then sleep. The injector's LD_PRELOAD fires before /bin/sh runs,
+            # so JAVA_TOOL_OPTIONS will reflect the injector's decision.
+            - |
+              echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS"
+              sleep 3600
+          env:
+            # Simulate existing manual instrumentation — a foreign javaagent.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-javaagent:/app/other-agent.jar"

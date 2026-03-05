@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: injector-mode-conflict
+spec:
+  steps:
+    - name: Install instrumentation CR
+      try:
+        - apply:
+            file: 00-install-instrumentation.yaml
+      cleanup:
+        - delete:
+            ref:
+              apiVersion: opentelemetry.io/v2alpha1
+              kind: Instrumentation
+              name: injector-mode-conflict
+    - name: Deploy Java app with existing agent
+      try:
+        - apply:
+            file: 01-install-app.yaml
+        - assert:
+            file: 01-assert.yaml
+      catch:
+        - podLogs:
+            selector: app=java-app-with-agent
+    - name: Verify injector backed off due to existing javaagent
+      try:
+        - script:
+            timeout: 60s
+            content: |
+              #!/bin/bash
+              set -e
+
+              # Wait for pod to be running
+              kubectl wait --for=condition=Ready pod -l app=java-app-with-agent \
+                -n ${NAMESPACE} --timeout=120s
+
+              # The injector should have detected the foreign -javaagent and backed off.
+              # Check the pod logs — the shell prints JAVA_TOOL_OPTIONS on startup.
+              LOGS=$(kubectl logs -n ${NAMESPACE} -l app=java-app-with-agent -c myapp)
+
+              echo "Pod logs:"
+              echo "$LOGS"
+
+              # The JAVA_TOOL_OPTIONS should still contain only the original agent,
+              # NOT our injected one (/otel/javaagent.jar).
+              if echo "$LOGS" | grep -q "/otel/javaagent.jar"; then
+                echo "FAIL: injector added its javaagent despite existing foreign agent (install_unless_conflict should back off)"
+                exit 1
+              fi
+
+              if echo "$LOGS" | grep -q "/app/other-agent.jar"; then
+                echo "OK: original javaagent preserved, injector correctly backed off"
+              else
+                echo "FAIL: original javaagent not found in JAVA_TOOL_OPTIONS"
+                exit 1
+              fi

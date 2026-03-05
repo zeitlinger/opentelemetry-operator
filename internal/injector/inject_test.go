@@ -195,7 +195,8 @@ func TestInjectPod_RuleMatchesByContainerName(t *testing.T) {
 	assert.Len(t, result.Spec.Containers[1].VolumeMounts, 1)
 }
 
-func TestInjectPod_DisabledRule(t *testing.T) {
+func TestInjectPod_ModeSkip(t *testing.T) {
+	skip := v2alpha1.InstrumentationModeSkip
 	inst := &v2alpha1.Instrumentation{
 		Spec: v2alpha1.InstrumentationSpec{
 			Injector: "injector:latest",
@@ -205,7 +206,7 @@ func TestInjectPod_DisabledRule(t *testing.T) {
 					Selector: v2alpha1.RuleSelector{
 						ContainerNames: []string{"sidecar"},
 					},
-					Config: v2alpha1.RuleConfig{Disabled: true},
+					Config: v2alpha1.RuleConfig{Mode: &skip},
 				},
 				{
 					Name: "catch-all",
@@ -230,9 +231,108 @@ func TestInjectPod_DisabledRule(t *testing.T) {
 	envMap := envToMap(result.Spec.Containers[0].Env)
 	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
 
-	// "sidecar" matches disabled rule → NOT injected
+	// "sidecar" matches Skip rule → NOT injected
 	assert.Empty(t, result.Spec.Containers[1].Env)
 	assert.Empty(t, result.Spec.Containers[1].VolumeMounts)
+}
+
+func TestInjectPod_ModeInstall(t *testing.T) {
+	install := v2alpha1.InstrumentationModeInstall
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "sdk:latest",
+			Rules: []v2alpha1.Rule{
+				{
+					Name:   "force-install",
+					Config: v2alpha1.RuleConfig{Mode: &install},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
+	assert.Equal(t, "install", envMap[envInjectorMode])
+}
+
+func TestInjectPod_DefaultModeIsInstallUnlessConflict(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "sdk:latest",
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, "install_unless_conflict", envMap[envInjectorMode])
+}
+
+func TestInjectPod_CRDefaultModeOverriddenByRule(t *testing.T) {
+	skip := v2alpha1.InstrumentationModeSkip
+	install := v2alpha1.InstrumentationModeInstall
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "sdk:latest",
+			Defaults: v2alpha1.InstrumentationDefaults{Mode: &skip},
+			Rules: []v2alpha1.Rule{
+				{
+					Name:   "force-install",
+					Config: v2alpha1.RuleConfig{Mode: &install},
+				},
+			},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	// Rule-level Install overrides CR-level Skip
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
+	assert.Equal(t, "install", envMap[envInjectorMode])
+}
+
+func TestInjectPod_CRDefaultModeAppliesWhenRuleUnset(t *testing.T) {
+	install := v2alpha1.InstrumentationModeInstall
+	inst := &v2alpha1.Instrumentation{
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "sdk:latest",
+			Defaults: v2alpha1.InstrumentationDefaults{Mode: &install},
+			Rules:    []v2alpha1.Rule{{Name: "catch-all"}},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app"}},
+		},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+	envMap := envToMap(result.Spec.Containers[0].Env)
+	assert.Equal(t, "install", envMap[envInjectorMode])
 }
 
 func TestInjectPod_FirstMatchWins(t *testing.T) {

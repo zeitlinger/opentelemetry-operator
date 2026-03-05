@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: java-app-force
+spec:
+  containers:
+    - name: myapp
+      env:
+        - name: LD_PRELOAD
+          value: /otel/libotelinject.so
+        - name: OTEL_INJECTOR_MODE
+          value: install
+      volumeMounts:
+        - name: otel-injector
+          mountPath: /otel
+  initContainers:
+    - name: otel-injector-init
+status:
+  phase: Running

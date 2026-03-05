@@ -1,0 +1,21 @@
+# Build injector image from a locally-built libotelinject.so.
+#
+# Step 1: Build the .so (from the injector repo):
+#   cd ~/source/opentelemetry-injector
+#   ARCH=amd64 make dist/libotelinject_amd64.so
+#
+# Step 2: Copy the built .so here and build the image:
+#   cp ~/source/opentelemetry-injector/dist/libotelinject_amd64.so images/injector/libotelinject.so
+#   docker build -f images/injector/Dockerfile.local -t local/injector:dev images/injector
+#
+# Step 3: Load into kind:
+#   kind load docker-image local/injector:dev --name otel-operator-e2e
+
+FROM alpine:3.23.3@sha256:25109184c71bdad752c8312a8623239686a9a2071e8825f20acb8f2198c3f659
+
+RUN mkdir -p /autoinstrumentation/injector
+
+COPY libotelinject.so /autoinstrumentation/libotelinject.so
+COPY otelinject.conf /autoinstrumentation/injector/otelinject.conf
+
+CMD ["true"]

@@ -10,6 +10,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// InstrumentationMode controls whether a rule installs instrumentation.
+// +kubebuilder:validation:Enum=Install;Skip;InstallUnlessConflict
+type InstrumentationMode string
+
+const (
+	// InstrumentationModeInstall forces instrumentation even if existing manual
+	// instrumentation is detected (e.g. Python sitecustomize, Node.js SDK imports).
+	InstrumentationModeInstall InstrumentationMode = "Install"
+
+	// InstrumentationModeSkip suppresses instrumentation for matching containers.
+	// Use this to explicitly opt out specific workloads from broader catch-all rules.
+	InstrumentationModeSkip InstrumentationMode = "Skip"
+
+	// InstrumentationModeInstallUnlessConflict installs instrumentation unless the
+	// injector detects existing manual instrumentation at runtime and backs off.
+	// This is the default when no mode is specified.
+	InstrumentationModeInstallUnlessConflict InstrumentationMode = "InstallUnlessConflict"
+)
+
 // InstrumentationSpec defines the desired state of Instrumentation.
 //
 // Image configuration lives at the spec level (not on individual rules) because
@@ -47,11 +66,24 @@ type InstrumentationSpec struct {
 	// +optional
 	DotNet string `json:"dotnet,omitempty"`
 
+	// Defaults defines CR-wide default values that can be overridden per rule.
+	// +optional
+	Defaults InstrumentationDefaults `json:"defaults,omitempty"`
+
 	// Rules is an ordered list of instrumentation rules. Rules are evaluated
 	// sequentially per container; the first matching rule is applied. If no rule
 	// matches, no instrumentation is applied.
 	// +optional
 	Rules []Rule `json:"rules,omitempty"`
+}
+
+// InstrumentationDefaults defines CR-wide defaults that individual rules can override.
+type InstrumentationDefaults struct {
+	// Mode is the default instrumentation mode for all rules in this CR.
+	// Individual rules can override this via config.mode.
+	// If unset, defaults to InstallUnlessConflict.
+	// +optional
+	Mode *InstrumentationMode `json:"mode,omitempty"`
 }
 
 // Rule defines a single instrumentation rule consisting of a selector and the
@@ -96,11 +128,11 @@ type RuleSelector struct {
 
 // RuleConfig defines what to do when a rule matches.
 type RuleConfig struct {
-	// Disabled, when true, suppresses instrumentation for matching containers.
-	// Use this to explicitly opt out specific containers from broader catch-all rules
-	// by placing a more specific disabled rule earlier in the list.
+	// Mode overrides spec.defaults.mode for this rule.
+	// Install forces instrumentation, Skip suppresses it, InstallUnlessConflict
+	// (the default) lets the injector detect and avoid existing instrumentation.
 	// +optional
-	Disabled bool `json:"disabled,omitempty"`
+	Mode *InstrumentationMode `json:"mode,omitempty"`
 
 	// Env is a list of environment variables to inject into instrumented containers.
 	// Supports all Kubernetes EnvVar sources including valueFrom.secretKeyRef.

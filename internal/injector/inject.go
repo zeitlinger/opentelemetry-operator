@@ -63,6 +63,7 @@ const (
 	envNodeName = "OTEL_NODE_NAME"
 
 	envInjectorResourceAttributes = "OTEL_INJECTOR_RESOURCE_ATTRIBUTES"
+	envInjectorMode               = "OTEL_INJECTOR_MODE"
 )
 
 func isAlreadyInjected(pod corev1.Pod) bool {
@@ -79,6 +80,32 @@ func isAlreadyInjected(pod corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// resolveMode returns the effective instrumentation mode for a rule.
+// Rule-level mode overrides the CR-level default; if neither is set,
+// InstallUnlessConflict is used.
+func resolveMode(crDefault, ruleOverride *v2alpha1.InstrumentationMode) v2alpha1.InstrumentationMode {
+	if ruleOverride != nil {
+		return *ruleOverride
+	}
+	if crDefault != nil {
+		return *crDefault
+	}
+	return v2alpha1.InstrumentationModeInstallUnlessConflict
+}
+
+// modeToEnvValue converts the CRD enum (PascalCase) to the lowercase value
+// expected by the injector binary (matching its existing env var conventions).
+func modeToEnvValue(mode v2alpha1.InstrumentationMode) string {
+	switch mode {
+	case v2alpha1.InstrumentationModeInstall:
+		return "install"
+	case v2alpha1.InstrumentationModeSkip:
+		return "skip"
+	default:
+		return "install_unless_conflict"
+	}
 }
 
 func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string) (corev1.Pod, error) {
@@ -111,8 +138,9 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			continue
 		}
 
-		// Disabled rule = explicit opt-out for this container.
-		if rule.Config.Disabled {
+		// Resolve effective mode: rule-level > CR defaults > InstallUnlessConflict.
+		mode := resolveMode(inst.Spec.Defaults.Mode, rule.Config.Mode)
+		if mode == v2alpha1.InstrumentationModeSkip {
 			continue
 		}
 
@@ -169,7 +197,7 @@ func injectPod(inst *v2alpha1.Instrumentation, pod corev1.Pod, namespace string)
 			})
 		}
 
-		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences, langEnvVars)
+		envVars := buildEnvVars(rule, c.Name, serviceName, namespace, pod.OwnerReferences, langEnvVars, mode)
 		if rule.Config.DeclarativeConfig != nil {
 			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelConfigFile, Value: otelConfigFilePath})
 			appendIfNotSet(&envVars, corev1.EnvVar{Name: envOTelExperimentalConfigFile, Value: otelConfigFilePath})
@@ -309,7 +337,7 @@ func buildLangInitContainers(spec v2alpha1.InstrumentationSpec, volName, mntPath
 	return containers
 }
 
-func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference, langEnvVars []corev1.EnvVar) []corev1.EnvVar {
+func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace string, ownerRefs []metav1.OwnerReference, langEnvVars []corev1.EnvVar, mode v2alpha1.InstrumentationMode) []corev1.EnvVar {
 	// User env vars go first so they win over operator defaults (K8s uses first occurrence).
 	envs := append([]corev1.EnvVar{}, rule.Config.Env...)
 
@@ -367,6 +395,7 @@ func buildEnvVars(rule *v2alpha1.Rule, containerName, serviceName, namespace str
 		corev1.EnvVar{Name: envInjectorServiceName, Value: serviceNameWithFallback(serviceName, containerName)},
 		corev1.EnvVar{Name: envInjectorServiceNamespace, Value: namespace},
 		corev1.EnvVar{Name: envInjectorResourceAttributes, Value: buildInjectorResourceAttrs(containerName, ownerRefs)},
+		corev1.EnvVar{Name: envInjectorMode, Value: modeToEnvValue(mode)},
 	)
 
 	return envs

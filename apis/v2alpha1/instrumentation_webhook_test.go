@@ -176,7 +176,8 @@ func TestValidate_RuleNameDNSCompatibility(t *testing.T) {
 	}
 }
 
-func TestValidate_DisabledWithDeclarativeConfig(t *testing.T) {
+func TestValidate_SkipWithDeclarativeConfig(t *testing.T) {
+	skip := InstrumentationModeSkip
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
 			Injector: "injector:latest",
@@ -184,7 +185,7 @@ func TestValidate_DisabledWithDeclarativeConfig(t *testing.T) {
 				{
 					Name: "conflicting",
 					Config: RuleConfig{
-						Disabled: true,
+						Mode: &skip,
 						DeclarativeConfig: &DeclarativeConfig{
 							Object: map[string]any{"file_format": "1.0"},
 						},
@@ -196,10 +197,45 @@ func TestValidate_DisabledWithDeclarativeConfig(t *testing.T) {
 
 	_, err := validate(inst)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "disabled rule must not have declarativeConfig")
+	assert.Contains(t, err.Error(), "mode Skip must not have declarativeConfig")
+}
+
+func TestValidate_InvalidMode(t *testing.T) {
+	bad := InstrumentationMode("Bogus")
+	inst := &Instrumentation{
+		Spec: InstrumentationSpec{
+			Injector: "sdk:latest",
+			Rules: []Rule{
+				{
+					Name:   "bad-mode",
+					Config: RuleConfig{Mode: &bad},
+				},
+			},
+		},
+	}
+
+	_, err := validate(inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid mode")
+}
+
+func TestValidate_InvalidDefaultsMode(t *testing.T) {
+	bad := InstrumentationMode("Bogus")
+	inst := &Instrumentation{
+		Spec: InstrumentationSpec{
+			Injector: "sdk:latest",
+			Defaults: InstrumentationDefaults{Mode: &bad},
+			Rules:    []Rule{{Name: "ok"}},
+		},
+	}
+
+	_, err := validate(inst)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.defaults.mode")
 }
 
 func TestValidate_MultipleErrors(t *testing.T) {
+	skip := InstrumentationModeSkip
 	inst := &Instrumentation{
 		Spec: InstrumentationSpec{
 			// Missing image + other errors
@@ -207,7 +243,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 				{
 					Name: "bad",
 					Config: RuleConfig{
-						Disabled: true,
+						Mode: &skip,
 						DeclarativeConfig: &DeclarativeConfig{
 							Object: map[string]any{"file_format": "1.0"},
 						},
@@ -223,7 +259,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 	// Should report all errors, not just the first.
 	assert.Contains(t, err.Error(), "spec.injector")
 	assert.Contains(t, err.Error(), "OTEL_INJECTOR_")
-	assert.Contains(t, err.Error(), "disabled rule must not have declarativeConfig")
+	assert.Contains(t, err.Error(), "mode Skip must not have declarativeConfig")
 }
 
 func TestValidate_UpdateSameAsCreate(t *testing.T) {

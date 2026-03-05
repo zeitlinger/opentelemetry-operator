@@ -252,15 +252,24 @@ spec:
 
     # ── Rule 3: opt-out ────────────────────────────────────────────────────────
     #
-    # disabled: true suppresses instrumentation for matching containers.
+    # mode: Skip suppresses instrumentation for matching containers.
     # Place opt-out rules BEFORE the catch-all so they take first-match priority.
     # Here we exclude all containers in the "kube-system" namespace from the
     # catch-all rule below.
+    #
+    # Mode values:
+    #   Install              — force instrumentation even if existing manual
+    #                          instrumentation is detected
+    #   Skip                 — suppress instrumentation (opt-out)
+    #   InstallUnlessConflict — (default) install unless the injector detects
+    #                          existing instrumentation at runtime and backs off
+    #
+    # spec.defaults.mode sets a CR-wide default; individual rules override it.
     - name: exclude-kube-system
       selector:
         namespaces: [kube-system]
       config:
-        disabled: true
+        mode: Skip
 
     # ── Rule 4: catch-all → in-cluster collector ───────────────────────────────
     #

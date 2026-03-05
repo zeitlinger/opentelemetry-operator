@@ -11,7 +11,7 @@ spec:
         containerNames:
           - sidecar
       config:
-        disabled: true
+        mode: Skip
     - name: catch-all
       config:
         env:
