@@ -3,8 +3,7 @@ kind: Instrumentation
 metadata:
   name: injector-disabled-rule
 spec:
-  injector:
-    image: busybox:latest
+  injector: busybox:latest
   rules:
     - name: skip-sidecar
       selector:

@@ -3,8 +3,7 @@ kind: Instrumentation
 metadata:
   name: injector-pod-label
 spec:
-  injector:
-    image: busybox:latest
+  injector: busybox:latest
   rules:
     - name: frontend-only
       selector:

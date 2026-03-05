@@ -3,8 +3,7 @@ kind: Instrumentation
 metadata:
   name: injector-basic
 spec:
-  injector:
-    image: busybox:latest
+  injector: busybox:latest
   rules:
     - name: catch-all
       config:

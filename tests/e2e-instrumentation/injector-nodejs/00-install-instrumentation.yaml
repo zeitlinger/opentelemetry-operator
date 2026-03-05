@@ -1,0 +1,19 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-nodejs
+spec:
+  injector: "{{INJECTOR_IMG}}"
+  nodejs: "{{INJECTOR_NODEJS_IMG}}"
+  rules:
+    - name: catch-all
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://deployment-collector:4318
+          - name: OTEL_TRACES_EXPORTER
+            value: otlp
+          - name: OTEL_METRICS_EXPORTER
+            value: otlp
+          - name: OTEL_TRACES_SAMPLER
+            value: always_on

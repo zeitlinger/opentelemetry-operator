@@ -135,6 +135,9 @@ InstrumentationSpec
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
 - [x] **Declarative config e2e test** — `tests/e2e-instrumentation/injector-declarative-config/`
 - [ ] **Mode conflict detection e2e test** — build injector from source (`grafana/opentelemetry-injector` branch `hackathon-16-mode-support`) and verify conflict detection end-to-end. Two chainsaw tests in `tests/e2e-instrumentation/injector-mode-{conflict,force}/`: (1) Java app with existing `-javaagent` → `install_unless_conflict` backs off, (2) same with `mode: Install` → forces injection. Run via `./hack/run-injector-mode-e2e.sh` (builds injector image, loads into kind, runs tests). Requires docker + kind cluster with operator deployed.
+- [x] **Full lifecycle e2e tests (Java + Node.js)** — `tests/e2e-instrumentation/injector-java/` and `injector-nodejs/`: deploy collector, instrument real app via v2alpha1 CR, verify telemetry (spans + metrics) arrives at collector with correct resource attributes (`service.name`, `k8s.deployment.name`, `service.instance.id`)
+- [x] **Existing injector test fixes** — fixed `injector` field from object (`injector:\n  image:`) to string format in all 5 existing tests (broken since `3a25e6f2` flattened the type); added `OTEL_INJECTOR_SERVICE_NAMESPACE`, `OTEL_INJECTOR_RESOURCE_ATTRIBUTES` assertions to all existing tests; added comprehensive downward API + resource attribute verification to `injector-basic`
+- [x] **Makefile injector e2e integration** — added `add-image-injector` target (sed-replaces `{{INJECTOR_IMG}}`/`{{INJECTOR_JAVA_IMG}}`/`{{INJECTOR_NODEJS_IMG}}` placeholders in test YAMLs); wired `load-image-injector-all` + `add-image-injector` into `prepare-e2e`
 
 ### Future work (post-hackathon)
 

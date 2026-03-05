@@ -496,7 +496,7 @@ e2e-crd-validations: chainsaw
 
 # Prepare environment for e2e tests
 .PHONY: prepare-e2e
-prepare-e2e: chainsaw set-image-controller add-image-targetallocator add-image-opampbridge start-kind cert-manager install-metrics-server install-targetallocator-prometheus-crds load-image-all deploy
+prepare-e2e: chainsaw set-image-controller add-image-targetallocator add-image-opampbridge start-kind cert-manager install-metrics-server install-targetallocator-prometheus-crds load-image-all load-image-injector-all add-image-injector deploy
 	@mkdir -p ./.testresults/e2e
 
 # Run operator-sdk scorecard tests for bundles
@@ -629,6 +629,13 @@ load-image-injector-all: container-injector-all kind
 	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_NODEJS_IMG}
 	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_PYTHON_IMG}
 	$(KIND) load --name $(KIND_CLUSTER_NAME) docker-image ${INJECTOR_DOTNET_IMG}
+
+# Replace injector image placeholders in e2e test manifests
+.PHONY: add-image-injector
+add-image-injector:
+	$(SED_INPLACE) 's|{{INJECTOR_IMG}}|$(INJECTOR_IMG)|g' tests/e2e-instrumentation/injector-*/00-install-instrumentation.yaml
+	$(SED_INPLACE) 's|{{INJECTOR_JAVA_IMG}}|$(INJECTOR_JAVA_IMG)|g' tests/e2e-instrumentation/injector-java/00-install-instrumentation.yaml
+	$(SED_INPLACE) 's|{{INJECTOR_NODEJS_IMG}}|$(INJECTOR_NODEJS_IMG)|g' tests/e2e-instrumentation/injector-nodejs/00-install-instrumentation.yaml
 
 ##@ Kind Cluster
 # Start kind cluster for local development

@@ -9,10 +9,16 @@ spec:
       env:
         - name: LD_PRELOAD
           value: /otel/autoinstrumentation/libotelinject.so
+        - name: OTEL_INJECTOR_CONFIG_FILE
+          value: /otel/injector/otelinject.conf
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://otel-collector:4318
+        - name: OTEL_INJECTOR_K8S_CONTAINER_NAME
+          value: myapp
         - name: OTEL_INJECTOR_SERVICE_NAME
           value: frontend-app
+        - name: OTEL_INJECTOR_SERVICE_NAMESPACE
+        - name: OTEL_INJECTOR_RESOURCE_ATTRIBUTES
       volumeMounts:
         - name: otel-injector
           mountPath: /otel

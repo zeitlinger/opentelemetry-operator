@@ -24,3 +24,27 @@ spec:
       catch:
         - podLogs:
             selector: app=my-app
+    - name: Verify resource attributes and service namespace
+      try:
+        - script:
+            content: |
+              #!/bin/bash
+              set -eu
+              ENV=$(kubectl get pod -n ${NAMESPACE} -l app=my-app -o jsonpath='{.items[0].spec.containers[0].env}')
+              # OTEL_INJECTOR_SERVICE_NAMESPACE should equal the test namespace
+              SVC_NS=$(echo "$ENV" | jq -r '.[] | select(.name == "OTEL_INJECTOR_SERVICE_NAMESPACE") | .value')
+              if [ "$SVC_NS" != "$NAMESPACE" ]; then
+                echo "FAIL: OTEL_INJECTOR_SERVICE_NAMESPACE='$SVC_NS', expected '$NAMESPACE'"
+                exit 1
+              fi
+              # OTEL_INJECTOR_RESOURCE_ATTRIBUTES should contain key resource attributes
+              RES_ATTRS=$(echo "$ENV" | jq -r '.[] | select(.name == "OTEL_INJECTOR_RESOURCE_ATTRIBUTES") | .value')
+              for expected in "service.instance.id=" "k8s.node.name=" "k8s.deployment.name=my-app"; do
+                if ! echo "$RES_ATTRS" | grep -q "$expected"; then
+                  echo "FAIL: OTEL_INJECTOR_RESOURCE_ATTRIBUTES missing '$expected'"
+                  echo "Got: $RES_ATTRS"
+                  exit 1
+                fi
+              done
+              echo "PASS: resource attributes contain service.instance.id, k8s.node.name, k8s.deployment.name=my-app"
+            timeout: 30s

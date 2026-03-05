@@ -1,0 +1,19 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-java
+spec:
+  injector: "{{INJECTOR_IMG}}"
+  java: "{{INJECTOR_JAVA_IMG}}"
+  rules:
+    - name: catch-all
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://deployment-collector:4318
+          - name: OTEL_EXPORTER_OTLP_PROTOCOL
+            value: http/protobuf
+          - name: OTEL_TRACES_SAMPLER
+            value: always_on
+          - name: OTEL_LOGS_EXPORTER
+            value: none

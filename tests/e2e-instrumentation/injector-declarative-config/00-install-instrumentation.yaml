@@ -3,8 +3,7 @@ kind: Instrumentation
 metadata:
   name: injector-declarative-config
 spec:
-  injector:
-    image: busybox:latest
+  injector: busybox:latest
   rules:
     - name: with-config
       config:
