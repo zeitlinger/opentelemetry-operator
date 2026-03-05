@@ -40,6 +40,12 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+- apiGroups:
   - apps
   resources:
   - daemonsets

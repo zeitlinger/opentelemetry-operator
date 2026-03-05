@@ -154,12 +154,12 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-opentelemetry-io-v2alpha1-instrumentation
+      path: /validate-instrumentation-opentelemetry-io-v2alpha1-instrumentation
   failurePolicy: Fail
   name: vinstrumentationv2createupdate.kb.io
   rules:
   - apiGroups:
-    - opentelemetry.io
+    - instrumentation.opentelemetry.io
     apiVersions:
     - v2alpha1
     operations:
@@ -174,12 +174,12 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-opentelemetry-io-v2alpha1-instrumentation
+      path: /validate-instrumentation-opentelemetry-io-v2alpha1-instrumentation
   failurePolicy: Ignore
   name: vinstrumentationv2delete.kb.io
   rules:
   - apiGroups:
-    - opentelemetry.io
+    - instrumentation.opentelemetry.io
     apiVersions:
     - v2alpha1
     operations:

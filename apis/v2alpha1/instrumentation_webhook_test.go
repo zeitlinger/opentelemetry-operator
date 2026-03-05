@@ -42,7 +42,7 @@ func TestValidate_EmptyInjectorImage(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.injector must be non-empty")
 }
@@ -58,7 +58,7 @@ func TestValidate_DuplicateRuleNames(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "duplicate rule name \"my-rule\"")
 }
@@ -74,7 +74,7 @@ func TestValidate_DuplicateEmptyNamesAllowed(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	assert.NoError(t, err)
 }
 
@@ -105,7 +105,7 @@ func TestValidate_ReservedEnvVars(t *testing.T) {
 				},
 			}
 
-			_, err := validate(inst)
+			_, err := InstrumentationWebhookV2{}.validate(inst)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errMsg)
 		})
@@ -128,7 +128,7 @@ func TestValidate_DeclarativeConfigRequiresName(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "declarativeConfig requires a rule name")
 }
@@ -165,7 +165,7 @@ func TestValidate_RuleNameDNSCompatibility(t *testing.T) {
 				},
 			}
 
-			_, err := validate(inst)
+			_, err := InstrumentationWebhookV2{}.validate(inst)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "DNS label")
@@ -195,7 +195,7 @@ func TestValidate_SkipWithDeclarativeConfig(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mode skip must not have declarativeConfig")
 }
@@ -214,7 +214,7 @@ func TestValidate_InvalidMode(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid mode")
 }
@@ -229,7 +229,7 @@ func TestValidate_InvalidDefaultsMode(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.defaults.mode")
 }
@@ -254,7 +254,7 @@ func TestValidate_MultipleErrors(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	require.Error(t, err)
 	// Should report all errors, not just the first.
 	assert.Contains(t, err.Error(), "spec.injector")
@@ -299,7 +299,7 @@ func TestValidate_ImageVolumesNotSupported_BlocksCreate(t *testing.T) {
 	w := InstrumentationWebhookV2{imageVolumeBlockedReason: "node kind-control-plane has containerd 1.7.23 which is below the minimum required 2.1"}
 	_, err := w.ValidateCreate(context.Background(), inst)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot create Instrumentation")
+	assert.Contains(t, err.Error(), "image volumes not supported")
 	assert.Contains(t, err.Error(), "kind-control-plane")
 }
 
@@ -315,7 +315,24 @@ func TestValidate_ImageVolumesNotSupported_BlocksUpdate(t *testing.T) {
 	w := InstrumentationWebhookV2{imageVolumeBlockedReason: "Kubernetes server version 1.31 is below minimum"}
 	_, err := w.ValidateUpdate(context.Background(), inst, inst)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot update Instrumentation")
+	assert.Contains(t, err.Error(), "image volumes not supported")
+}
+
+func TestValidate_ImageVolumesNotSupported_AllowsUpdateDuringDeletion(t *testing.T) {
+	now := metav1.Now()
+	inst := &Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"injector.opentelemetry.io/configmap-cleanup"},
+		},
+	}
+
+	// Even on an incompatible cluster, finalizer removal (an update with
+	// DeletionTimestamp set) must be allowed or the CR will be stuck.
+	w := InstrumentationWebhookV2{imageVolumeBlockedReason: "Kubernetes server version 1.31 is below minimum"}
+	_, err := w.ValidateUpdate(context.Background(), inst, inst)
+	assert.NoError(t, err)
 }
 
 func TestValidate_ImageVolumesSupported_AllowsCreate(t *testing.T) {
@@ -344,6 +361,6 @@ func TestValidate_RuleNameWithoutDeclarativeConfig_SkipsDNSCheck(t *testing.T) {
 		},
 	}
 
-	_, err := validate(inst)
+	_, err := InstrumentationWebhookV2{}.validate(inst)
 	assert.NoError(t, err)
 }

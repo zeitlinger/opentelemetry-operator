@@ -15,8 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// +kubebuilder:webhook:verbs=create;update,path=/validate-opentelemetry-io-v2alpha1-instrumentation,mutating=false,failurePolicy=fail,groups=opentelemetry.io,resources=instrumentations,versions=v2alpha1,name=vinstrumentationv2createupdate.kb.io,sideEffects=none,admissionReviewVersions=v1
-// +kubebuilder:webhook:verbs=delete,path=/validate-opentelemetry-io-v2alpha1-instrumentation,mutating=false,failurePolicy=ignore,groups=opentelemetry.io,resources=instrumentations,versions=v2alpha1,name=vinstrumentationv2delete.kb.io,sideEffects=none,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=create;update,path=/validate-instrumentation-opentelemetry-io-v2alpha1-instrumentation,mutating=false,failurePolicy=fail,groups=instrumentation.opentelemetry.io,resources=instrumentations,versions=v2alpha1,name=vinstrumentationv2createupdate.kb.io,sideEffects=none,admissionReviewVersions=v1
+// +kubebuilder:webhook:verbs=delete,path=/validate-instrumentation-opentelemetry-io-v2alpha1-instrumentation,mutating=false,failurePolicy=ignore,groups=instrumentation.opentelemetry.io,resources=instrumentations,versions=v2alpha1,name=vinstrumentationv2delete.kb.io,sideEffects=none,admissionReviewVersions=v1
 // +kubebuilder:object:generate=false
 
 // InstrumentationWebhookV2 validates v2alpha1 Instrumentation CRs.
@@ -51,12 +51,7 @@ func (w InstrumentationWebhookV2) ValidateCreate(_ context.Context, obj runtime.
 	if !ok {
 		return nil, fmt.Errorf("expected an Instrumentation, received %T", obj)
 	}
-	if w.imageVolumeBlockedReason != "" {
-		w.log.Info("rejected Instrumentation create: image volumes not supported",
-			"name", inst.Name, "reason", w.imageVolumeBlockedReason)
-		return nil, fmt.Errorf("cannot create Instrumentation: %s", w.imageVolumeBlockedReason)
-	}
-	return validate(inst)
+	return w.validate(inst)
 }
 
 func (w InstrumentationWebhookV2) ValidateUpdate(_ context.Context, _, newObj runtime.Object) (admission.Warnings, error) {
@@ -64,12 +59,11 @@ func (w InstrumentationWebhookV2) ValidateUpdate(_ context.Context, _, newObj ru
 	if !ok {
 		return nil, fmt.Errorf("expected an Instrumentation, received %T", newObj)
 	}
-	if w.imageVolumeBlockedReason != "" {
-		w.log.Info("rejected Instrumentation update: image volumes not supported",
-			"name", inst.Name, "reason", w.imageVolumeBlockedReason)
-		return nil, fmt.Errorf("cannot update Instrumentation: %s", w.imageVolumeBlockedReason)
+	// Allow updates during deletion (e.g. finalizer removal by the controller).
+	if inst.DeletionTimestamp != nil {
+		return nil, nil
 	}
-	return validate(inst)
+	return w.validate(inst)
 }
 
 func (w InstrumentationWebhookV2) ValidateDelete(_ context.Context, _ runtime.Object) (admission.Warnings, error) {
@@ -77,7 +71,13 @@ func (w InstrumentationWebhookV2) ValidateDelete(_ context.Context, _ runtime.Ob
 	return nil, nil
 }
 
-func validate(inst *Instrumentation) (admission.Warnings, error) {
+func (w InstrumentationWebhookV2) validate(inst *Instrumentation) (admission.Warnings, error) {
+	if w.imageVolumeBlockedReason != "" {
+		w.log.Info("rejected Instrumentation: image volumes not supported",
+			"name", inst.Name, "reason", w.imageVolumeBlockedReason)
+		return nil, fmt.Errorf("image volumes not supported on this cluster: %s", w.imageVolumeBlockedReason)
+	}
+
 	var errs []string
 
 	// 1. Injector image is required.
