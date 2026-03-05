@@ -14,7 +14,7 @@ spec:
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: http://otel-collector:4318
         - name: OTEL_INJECTOR_MODE
-          value: install_unless_conflict
+          value: install
         - name: OTEL_INJECTOR_K8S_CONTAINER_NAME
           value: myapp
         - name: OTEL_INJECTOR_SERVICE_NAME
@@ -25,6 +25,7 @@ spec:
         - name: otel-injector
           mountPath: /otel
           readOnly: true
+    # sidecar should NOT have any injection (mode=Skip)
     - name: sidecar
   volumes:
     - name: otel-injector

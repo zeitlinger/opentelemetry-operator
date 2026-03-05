@@ -1,0 +1,22 @@
+apiVersion: opentelemetry.io/v2alpha1
+kind: Instrumentation
+metadata:
+  name: injector-mode
+spec:
+  injector: busybox:latest
+  defaults:
+    mode: Install
+  rules:
+    # Rule with explicit mode=Skip overriding CR default — should suppress injection.
+    - name: skip-sidecar
+      selector:
+        containerNames:
+          - sidecar
+      config:
+        mode: Skip
+    # Rule with no mode — inherits CR default (Install).
+    - name: catch-all
+      config:
+        env:
+          - name: OTEL_EXPORTER_OTLP_ENDPOINT
+            value: http://otel-collector:4318

@@ -47,6 +47,8 @@ spec:
           value: my-app
         - name: OTEL_INJECTOR_SERVICE_NAMESPACE
         - name: OTEL_INJECTOR_RESOURCE_ATTRIBUTES
+        - name: OTEL_INJECTOR_MODE
+          value: install_unless_conflict
       volumeMounts:
         - name: otel-injector
           mountPath: /otel
