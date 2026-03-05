@@ -217,6 +217,20 @@ InstrumentationSpec
 
 Auto-detect when instrumentation causes a pod to crash-loop and automatically back off. Full design rationale and research in [CRASHLOOP-RECOVERY-DESIGN.md](CRASHLOOP-RECOVERY-DESIGN.md).
 
+### Timing model
+
+```mermaid
+flowchart TD
+    A[Pod crashes] --> B{Time since injection\n< stability window?\n1h default}
+    B -- No --> C[Ignore — crash is\nunrelated to instrumentation]
+    B -- Yes --> D{CrashLoopBackOff\nlasting ≥ grace period?\n5m default}
+    D -- No, recovers --> E[No action —\ntransient startup issue]
+    D -- Yes, sustained --> F[ROLLBACK]
+```
+
+- **Grace period (5m):** How long a pod must be in `CrashLoopBackOff` before we roll back. Avoids reacting to transient startup issues (e.g. waiting for a database).
+- **Stability window (1h):** How long after injection we attribute crashes to instrumentation. After this, crashes are assumed unrelated (app bug, OOM, config change).
+
 ### Key decisions
 
 | # | Question | Decision |
@@ -226,7 +240,7 @@ Auto-detect when instrumentation causes a pod to crash-loop and automatically ba
 | Q3 | How to trigger rollout restart? | **`kubectl.kubernetes.io/restartedAt` pod template annotation** — standard k8s mechanism, avoids reimplementing rolling update logic |
 | Q4 | How to identify instrumented workloads? | **Instrumentation state DB in CR status** — zero pod/workload manifest changes; controller records state asynchronously, no labels or env var inspection needed |
 | Q5 | Timing config scope? | **CR-wide only** (`spec.defaults.rollback`) — 5m grace, 1h stability window. Per-rule overrides deferred (backwards-compatible addition later if needed). Use separate CR with higher priority for workload-specific timing |
-| Q6 | How does recovery work? | **Automatic retry on CR spec change** (tracks `crGeneration`) + manual override. No time-based retry |
+| Q6 | How does recovery work? | **Automatic retry on CR spec change** — rollback entry records `crGeneration`; when someone updates the CR (e.g. new agent image), generation increases, controller clears rollback and re-injects. Manual override via `kubectl patch` on status. No time-based retry (same broken agent would just crash again) |
 | Q7 | Pre-existing crash protection? | **Yes** — skip injection for workloads already in `CrashLoopBackOff`, log warning |
 
 ### Flow diagrams
