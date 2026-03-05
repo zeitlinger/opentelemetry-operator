@@ -193,8 +193,7 @@ InstrumentationSpec
 
 - **Namespace label selectors** — currently only exact namespace name matching; selecting namespaces by label (like NetworkPolicy's `namespaceSelector`) is a v2 enhancement
 - **TLS / volume mounts** — no mechanism to mount cert files (e.g. mTLS certs for collector communication) into instrumented containers; workaround is user-managed volumes. Separate from image volumes (which replace the init container pattern for agent binaries)
-- **Annotation-based opt-out** — `config.mode: Skip` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
-- **Node.js conflict detection** — Python conflict detection exists (`sitecustomize` safety checks); Node.js equivalent needs upstream work (Nikola)
+- **Annotation-based opt-out** — `config.mode: skip` on a rule handles the common case; pod-level annotation opt-out can be added later if needed
 
 ## Decisions (Mar 4 sync)
 
@@ -207,124 +206,18 @@ InstrumentationSpec
 
 ## Status
 
-### Done
-- [x] CRD schema design (Jack + Claude)
-- [x] `apis/v2alpha1/instrumentation_types.go` — full schema implemented
-- [x] `instrumentation-v2alpha1-example.yaml` — annotated reference example
-- [x] Injector init container + LD_PRELOAD injection
-- [x] Pod mutator with rules-based matching (namespace ∧ pod labels ∧ container names)
-- [x] CR priority resolution (multi-CR tiebreaking)
-- [x] Env var injection per container from `config.env`
-- [x] Disabled rule support (opt-out) — being replaced by tri-state `config.mode`
-- [x] Annotation-based triggering removed — rules selectors are the selection mechanism
-- [x] `OTEL_INJECTOR_*` env var validation (hard error on reserved prefix in user config)
-- [x] User env vars win over operator defaults (`appendIfNotSet` pattern)
-- [x] `OTEL_NODE_IP` / `OTEL_POD_IP` downward API vars (consistent with v1alpha1)
-- [x] `OTEL_INJECTOR_RESOURCE_ATTRIBUTES` with k8s metadata + service.instance.id
-- [x] `OTEL_NODE_NAME` downward API for k8s.node.name
-- [x] Owner ref resource attributes (k8s.replicaset.name, k8s.statefulset.name, etc.)
-- [x] Precedence documentation (service name + resource attributes)
-- [x] Declarative config — reconciler creates ConfigMaps per rule, webhook mounts volume + sets both `OTEL_CONFIG_FILE` and `OTEL_EXPERIMENTAL_CONFIG_FILE` (both set because SDKs haven't stabilized the env var name yet)
-- [x] Controller / reconciler — watches Instrumentation CRs + namespaces, manages ConfigMap lifecycle with finalizer and pruning
-- [x] Config file env vars (`OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE`) blocked in rule env — operator sets them automatically
-- [x] Catch-all rules skip `kube-*` system namespaces — **note:** only `kube-*` prefix is skipped automatically; other system namespaces (e.g. `opentelemetry-operator-system`, `cert-manager`) require an explicit `disabled: true` rule in the CR (see `scratch/instrumentation-v2alpha1.yaml`)
-- [x] Name truncation uses hash suffix to avoid collisions (ConfigMap names at 253, volume names at 63)
-
 ### TODO
 
-- [x] **Tri-state `config.mode`** — replaced `disabled: bool` with `InstrumentationMode` enum (`install`/`skip`/`install_unless_conflict`), added `spec.defaults.mode` with rule-level override. Injector receives resolved mode via `OTEL_INJECTOR_MODE` env var
-- [x] **Temporary language-specific images** — per-language injector images (`injector-java`, `injector-nodejs`, `injector-python`, `injector-dotnet`) built and tested end-to-end (Java traces confirmed in collector)
-- [x] **Per-language agent init containers** — implemented in `inject.go`; per-language init containers added when `spec.java/nodejs/python/dotnet` are set; verified working
-- [x] **SDK path env var overrides** — `JVM_AUTO_INSTRUMENTATION_AGENT_PATH`, `NODEJS_AUTO_INSTRUMENTATION_AGENT_PATH`, `PYTHON_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX`, `DOTNET_AUTO_INSTRUMENTATION_AGENT_PATH_PREFIX` injected into containers when per-language images are configured
-- [x] **Status subresource** — `InstrumentationStatus` with `Ready` condition (set by reconciler with rule/ConfigMap counts, error messages on failure)
-- [x] **Validation webhook** — `apis/v2alpha1/instrumentation_webhook.go` validates: empty image, duplicate names, reserved env vars, DNS rule names, declarativeConfig requires name, disabled+declarativeConfig conflict
 - [ ] **Image volumes** (Johanna) — K8s 1.31+ image volumes replace init container + emptyDir. v1alpha1 support done (`internal/instrumentation/`), needs porting to v2alpha1 injector (`internal/injector/inject.go`)
-- [x] **Local testing with kind** — Java and Node.js traces confirmed end-to-end in collector
+- [ ] **Mode conflict detection e2e test** — build injector from source and verify conflict detection end-to-end (see "Testing mode conflict detection end-to-end" above)
 - [ ] **Operator internal telemetry** — export operator metrics (instrumentation status per pod, failures) via OTel collector for external monitoring / Prometheus dashboard
-- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures (restart count, failure reason from k8s events) and avoid re-instrumenting failing pods
-- [x] **Declarative config e2e test** — `tests/e2e-instrumentation/injector-declarative-config/`
-- [ ] **Mode conflict detection e2e test** — build injector from source (`grafana/opentelemetry-injector` branch `hackathon-16-mode-support`, `Dockerfile.operator-e2e`) and verify conflict detection end-to-end. Deploy a Java app with an existing foreign `-javaagent` (e.g. Prometheus JMX exporter): (1) `install_unless_conflict` → injector detects conflict, backs off, (2) `mode: install` → forces injection over existing agent. Requires full kind cluster with image volumes enabled (see "How operator + injector work together" section above).
-- [x] **Full lifecycle e2e tests (Java + Node.js)** — `tests/e2e-instrumentation/injector-java/` and `injector-nodejs/`: deploy collector, instrument real app via v2alpha1 CR, verify telemetry (spans + metrics) arrives at collector with correct resource attributes (`service.name`, `k8s.deployment.name`, `service.instance.id`)
-- [x] **Existing injector test fixes** — fixed `injector` field from object (`injector:\n  image:`) to string format in all 5 existing tests (broken since `3a25e6f2` flattened the type); added `OTEL_INJECTOR_SERVICE_NAMESPACE`, `OTEL_INJECTOR_RESOURCE_ATTRIBUTES` assertions to all existing tests; added comprehensive downward API + resource attribute verification to `injector-basic`
-- [x] **Makefile injector e2e integration** — added `add-image-injector` target (sed-replaces `{{INJECTOR_IMG}}`/`{{INJECTOR_JAVA_IMG}}`/`{{INJECTOR_NODEJS_IMG}}` placeholders in test YAMLs); wired `load-image-injector-all` + `add-image-injector` into `prepare-e2e`
+- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods
 
 ### Future work (post-hackathon)
 
 - [ ] **Node.js conflict detection** (Nikola) — upstream equivalent of Python's `sitecustomize` safety checks for Node.js
 - [ ] **Python image restructuring** (Nikola → injector SIG) — standardize Python image to match .NET layout (both glibc+musl in one dir); propose env var overrides per glibc flavor to injector SIG
 - [ ] **Split language images** — decompose composite image into individual shareable images (deferred from hackathon, depends on injector SIG alignment)
-
-## Task details
-
-### Tri-state `config.mode` (replaces `disabled: bool`)
-
-Replace the boolean `disabled` field with an `InstrumentationMode` enum:
-- `install` — force instrumentation even if existing manual instrumentation is detected
-- `skip` — suppress instrumentation (replaces `disabled: true`)
-- `install_unless_conflict` (default) — install unless the injector detects existing instrumentation (e.g. Python `sitecustomize` conflict)
-
-**Implementation:**
-1. Add `InstrumentationMode` string type + constants to `instrumentation_types.go`
-2. Add `spec.defaults.mode` field (CR-wide default)
-3. Replace `config.disabled bool` with `config.mode *InstrumentationMode` on `RuleConfig`
-4. In `inject.go`, resolve effective mode: rule-level overrides CR-level default, absent = `InstallUnlessConflict`
-5. Pass resolved mode to injector via env var (e.g. `OTEL_INJECTOR_MODE`)
-6. Update example CR, tests, validation webhook
-
-**Files:** `apis/v2alpha1/instrumentation_types.go`, `internal/injector/inject.go`, `internal/injector/inject_test.go`
-
-### Validation webhook
-
-Reject invalid CRs at admission time. Follow the pattern in `apis/v1alpha1/instrumentation_webhook.go`.
-
-**Validations:**
-1. **Empty injector image** — `spec.injector` must be non-empty (CR is useless without it)
-2. **Duplicate rule names** — rule names must be unique within a CR (colliding ConfigMap names otherwise). Empty names are fine (no ConfigMap created unless declarativeConfig is set)
-3. **Reserved env vars** — `OTEL_INJECTOR_*`, `OTEL_CONFIG_FILE`, and `OTEL_EXPERIMENTAL_CONFIG_FILE` in `config.env` must be rejected (already validated at injection time in `inject.go:validateRuleEnv`, but better to catch at CR creation)
-4. **Rule name DNS compatibility** — when `declarativeConfig` is set, the rule name becomes part of ConfigMap name `otel-injector-{cr}-{rule}`, so it must be lowercase alphanumeric + hyphens, max ~200 chars
-5. **DeclarativeConfig requires rule name** — if a rule has `declarativeConfig` but no `name`, the ConfigMap name is indeterminate
-6. **Disabled + declarativeConfig conflict** — `disabled: true` with `declarativeConfig` set is contradictory (config would be created but never mounted). Reject at admission.
-
-**Files:**
-- `apis/v2alpha1/instrumentation_webhook.go` — new, implement `ValidateCreate`/`ValidateUpdate`/`ValidateDelete`
-- `apis/v2alpha1/instrumentation_webhook_test.go` — new
-- `main.go` — register with `otelv2alpha1.SetupInstrumentationWebhook(mgr, cfg)`
-
-### Injector-side mode implementation (`opentelemetry-injector`)
-
-The operator passes `OTEL_INJECTOR_MODE` to the injector binary. Values are lowercase to match injector env var conventions: `install`, `skip`, `install_unless_conflict`.
-
-**`config.zig`:**
-- Add `mode` field to config struct (enum: `install`, `skip`, `install_unless_conflict`)
-- Read from `OTEL_INJECTOR_MODE` env var, default `install_unless_conflict`
-- Config file key: `mode`
-
-**`root.zig`:**
-- After config read + allow/deny evaluation, branch on mode:
-  - `skip` → return early, log "mode=skip, skipping injection"
-  - `install` → set `force` flag, pass to language modules. **Expert option** — forces injection even over existing instrumentation. Log at warn level what was overwritten.
-  - `install_unless_conflict` → set `detect_conflicts` flag, pass to language modules
-
-**Per-language conflict detection (`install_unless_conflict` mode):**
-
-| Language | Conflict signal | Behavior |
-|----------|----------------|----------|
-| **JVM** (`jvm.zig`) | Any existing `-javaagent:` in `JAVA_TOOL_OPTIONS` with a *different* path | Always back off — a foreign agent is present |
-| **Python** (`python.zig`) | Foreign paths in `PYTHONPATH` pointing to OTel SDK packages, or existing `sitecustomize.py` that isn't ours | Back off |
-| **.NET** (`dotnet.zig`) | `CORECLR_ENABLE_PROFILING=1` already set with a different `CORECLR_PROFILER` GUID | Back off — only one profiler can run |
-| **Node.js** (`nodejs.zig`) | Existing `--require` in `NODE_OPTIONS` pointing to OTel SDK | Back off (incomplete — needs upstream work, see Nikola's note) |
-
-**`install` (force) mode:**
-- Skip double-injection checks — overwrite existing values
-- Log at warn level: "mode=install, forcing injection over existing {details}"
-
-**Logging/reporting:**
-- Log at info level when conflict detected and backing off
-- Log at warn level when `mode=install` forces over existing instrumentation
-
-**Reference:** Beyla's `scanner.go` detects languages via `/proc/PID/maps` (`libjvm.so`, `libcoreclr.so`, `node`, `python`) and tracks SDK versions via `BEYLA_INJECTOR_SDK_PKG_VERSION`. Different approach (process inspection vs env var checks) but useful reference for future runtime detection.
-
-**Files:** `src/config.zig`, `src/root.zig`, `src/python.zig`, `src/jvm.zig`, `src/nodejs.zig`, `src/dotnet.zig`
 
 ## v1alpha1 comparison
 
