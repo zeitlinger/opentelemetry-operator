@@ -84,6 +84,31 @@ type InstrumentationDefaults struct {
 	// If unset, defaults to InstallUnlessConflict.
 	// +optional
 	Mode *InstrumentationMode `json:"mode,omitempty"`
+
+	// Rollback configures automatic crash-loop recovery. When enabled, the operator
+	// detects workloads that enter CrashLoopBackOff after instrumentation and automatically
+	// backs off by skipping injection and restarting the workload.
+	// +optional
+	Rollback *RollbackConfig `json:"rollback,omitempty"`
+}
+
+// RollbackConfig controls automatic crash-loop recovery behavior.
+type RollbackConfig struct {
+	// Enabled controls whether automatic rollback is active. Defaults to true.
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// GraceTime is how long a pod must be in CrashLoopBackOff before the operator
+	// triggers a rollback. This avoids reacting to transient startup issues.
+	// Defaults to 5m.
+	// +optional
+	GraceTime *metav1.Duration `json:"graceTime,omitempty"`
+
+	// StabilityWindow is how long after injection the operator attributes crashes to
+	// instrumentation. Crashes after this window are assumed unrelated.
+	// Defaults to 1h.
+	// +optional
+	StabilityWindow *metav1.Duration `json:"stabilityWindow,omitempty"`
 }
 
 // Rule defines a single instrumentation rule consisting of a selector and the
@@ -232,6 +257,56 @@ type InstrumentationStatus struct {
 	// Known condition types: "Ready".
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// InstrumentedWorkloads tracks workloads that have been instrumented by this CR.
+	// Maintained by the rollback controller; used for crash-loop recovery, pod bouncing
+	// on CR updates, and operator internal telemetry.
+	// +optional
+	InstrumentedWorkloads []InstrumentedWorkload `json:"instrumentedWorkloads,omitempty"`
+}
+
+// InstrumentedWorkload records that a workload has been instrumented by this CR.
+type InstrumentedWorkload struct {
+	// WorkloadRef identifies the instrumented workload.
+	WorkloadRef WorkloadReference `json:"workloadRef"`
+
+	// RuleName is the name of the rule that matched this workload.
+	// +optional
+	RuleName string `json:"ruleName,omitempty"`
+
+	// InstrumentedAt is when injection was first applied to this workload.
+	InstrumentedAt metav1.Time `json:"instrumentedAt"`
+
+	// CRGeneration is the CR's metadata.generation at the time of injection.
+	// Used to detect CR spec changes for automatic recovery after rollback.
+	CRGeneration int64 `json:"crGeneration"`
+
+	// Rollback is set when the operator has rolled back instrumentation for this
+	// workload due to crash-loop detection. Nil means the workload is healthy.
+	// +optional
+	Rollback *RollbackInfo `json:"rollback,omitempty"`
+}
+
+// WorkloadReference identifies a Kubernetes workload.
+type WorkloadReference struct {
+	// Kind is the workload kind (e.g. Deployment, StatefulSet, DaemonSet).
+	Kind string `json:"kind"`
+
+	// Namespace is the workload's namespace.
+	Namespace string `json:"namespace"`
+
+	// Name is the workload's name.
+	Name string `json:"name"`
+}
+
+// RollbackInfo records details about a crash-loop rollback.
+type RollbackInfo struct {
+	// Reason is the Kubernetes container state reason that triggered the rollback
+	// (e.g. CrashLoopBackOff, ImagePullBackOff).
+	Reason string `json:"reason"`
+
+	// RolledBackAt is when the rollback was triggered.
+	RolledBackAt metav1.Time `json:"rolledBackAt"`
 }
 
 // Instrumentation is the Schema for the instrumentations API.

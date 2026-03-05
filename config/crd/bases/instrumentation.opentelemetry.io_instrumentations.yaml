@@ -43,6 +43,15 @@ spec:
                     - skip
                     - install_unless_conflict
                     type: string
+                  rollback:
+                    properties:
+                      enabled:
+                        type: boolean
+                      graceTime:
+                        type: string
+                      stabilityWindow:
+                        type: string
+                    type: object
                 type: object
               dotnet:
                 type: string
@@ -209,6 +218,47 @@ spec:
                   - reason
                   - status
                   - type
+                  type: object
+                type: array
+              instrumentedWorkloads:
+                items:
+                  properties:
+                    crGeneration:
+                      format: int64
+                      type: integer
+                    instrumentedAt:
+                      format: date-time
+                      type: string
+                    rollback:
+                      properties:
+                        reason:
+                          type: string
+                        rolledBackAt:
+                          format: date-time
+                          type: string
+                      required:
+                      - reason
+                      - rolledBackAt
+                      type: object
+                    ruleName:
+                      type: string
+                    workloadRef:
+                      properties:
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                      required:
+                      - kind
+                      - name
+                      - namespace
+                      type: object
+                  required:
+                  - crGeneration
+                  - instrumentedAt
+                  - workloadRef
                   type: object
                 type: array
             type: object
