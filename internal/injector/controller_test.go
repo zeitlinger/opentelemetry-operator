@@ -316,6 +316,96 @@ func TestDeleteAllConfigMaps(t *testing.T) {
 	require.NoError(t, err, "unrelated ConfigMap should still exist")
 }
 
+func TestReconcile_Deletion_CleansUpConfigMaps(t *testing.T) {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}}
+	now := metav1.Now()
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "my-inst",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{finalizerName},
+		},
+		Spec: v2alpha1.InstrumentationSpec{
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "rule-a",
+					Selector: v2alpha1.RuleSelector{
+						Namespaces: []string{"default"},
+					},
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// ConfigMap that should be cleaned up during deletion.
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ConfigMapName("my-inst", "rule-a"),
+			Namespace: "default",
+			Labels: map[string]string{
+				labelManagedBy:       labelManagedByValue,
+				labelInstrumentation: "my-inst",
+				labelRule:            "rule-a",
+			},
+		},
+		Data: map[string]string{configMapDataKey: "file_format: \"1.0\"\n"},
+	}
+
+	r, cli := newReconciler(ns, inst, cm)
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: client.ObjectKeyFromObject(inst),
+	})
+	require.NoError(t, err)
+
+	// ConfigMap should be deleted.
+	var got corev1.ConfigMap
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(cm), &got)
+	assert.True(t, apierrors.IsNotFound(err), "ConfigMap should have been deleted during CR deletion")
+
+	// After finalizer removal, the fake client may garbage-collect the object
+	// (DeletionTimestamp set + no finalizers = deleted). Either outcome is correct.
+	var updated v2alpha1.Instrumentation
+	err = cli.Get(context.Background(), client.ObjectKeyFromObject(inst), &updated)
+	if err == nil {
+		assert.NotContains(t, updated.Finalizers, finalizerName)
+	} else {
+		assert.True(t, apierrors.IsNotFound(err), "object should be gone after finalizer removal")
+	}
+}
+
+func TestReconcile_DeletionWithoutFinalizer_Noop(t *testing.T) {
+	now := metav1.Now()
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "my-inst",
+			DeletionTimestamp: &now,
+			Finalizers:        []string{"some-other-finalizer"}, // not ours
+		},
+	}
+
+	r, _ := newReconciler(inst)
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: client.ObjectKeyFromObject(inst),
+	})
+	require.NoError(t, err)
+}
+
+func TestReconcile_NotFound_Noop(t *testing.T) {
+	r, _ := newReconciler()
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: client.ObjectKey{Name: "nonexistent"},
+	})
+	require.NoError(t, err)
+}
+
 func TestEnqueueAllInstrumentations(t *testing.T) {
 	inst1 := &v2alpha1.Instrumentation{
 		ObjectMeta: metav1.ObjectMeta{Name: "inst1"},

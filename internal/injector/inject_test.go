@@ -1154,6 +1154,71 @@ func TestInjectPod_NoPerLanguageImages_NoLangEnvVars(t *testing.T) {
 	assert.Empty(t, envMap[envDotnetAgentPath])
 }
 
+func TestInjectPod_PerLanguageImageVolumes_WithDeclarativeConfig(t *testing.T) {
+	inst := &v2alpha1.Instrumentation{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-inst"},
+		Spec: v2alpha1.InstrumentationSpec{
+			Injector: "injector:latest",
+			Java:     "java-agent:latest",
+			NodeJS:   "nodejs-agent:latest",
+			Rules: []v2alpha1.Rule{
+				{
+					Name: "with-config",
+					Config: v2alpha1.RuleConfig{
+						DeclarativeConfig: &v2alpha1.DeclarativeConfig{
+							Object: map[string]any{"file_format": "1.0"},
+						},
+					},
+				},
+			},
+		},
+	}
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "test"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}},
+	}
+
+	result := mustInjectPod(t, inst, pod, "default")
+
+	// 4 volumes: injector image + java + nodejs + declarative config ConfigMap.
+	require.Len(t, result.Spec.Volumes, 4)
+	assert.Equal(t, volumeName, result.Spec.Volumes[0].Name)
+	assert.NotNil(t, result.Spec.Volumes[0].Image, "injector volume should be an image volume")
+	assert.Equal(t, langVolumeName("java"), result.Spec.Volumes[1].Name)
+	assert.NotNil(t, result.Spec.Volumes[1].Image, "java volume should be an image volume")
+	assert.Equal(t, langVolumeName("nodejs"), result.Spec.Volumes[2].Name)
+	assert.NotNil(t, result.Spec.Volumes[2].Image, "nodejs volume should be an image volume")
+	assert.NotNil(t, result.Spec.Volumes[3].ConfigMap, "config volume should be a ConfigMap volume")
+
+	// Container gets 4 mounts: injector + java + nodejs + config.
+	c := result.Spec.Containers[0]
+	require.Len(t, c.VolumeMounts, 4)
+	assert.Equal(t, mountPath, c.VolumeMounts[0].MountPath)
+	assert.Equal(t, langMountPath("java"), c.VolumeMounts[1].MountPath)
+	assert.Equal(t, langMountPath("nodejs"), c.VolumeMounts[2].MountPath)
+	assert.Equal(t, configMountPath, c.VolumeMounts[3].MountPath)
+
+	// All mounts are read-only.
+	for _, vm := range c.VolumeMounts {
+		assert.True(t, vm.ReadOnly, "mount %s should be read-only", vm.Name)
+	}
+
+	// No mount path conflicts: /otel, /otel-java, /otel-nodejs, /otel-config are all distinct.
+	paths := map[string]bool{}
+	for _, vm := range c.VolumeMounts {
+		assert.False(t, paths[vm.MountPath], "duplicate mount path: %s", vm.MountPath)
+		paths[vm.MountPath] = true
+	}
+
+	// Env vars: lang agent paths + config file paths + core injector vars.
+	envMap := envToMap(c.Env)
+	assert.Equal(t, langMountPath("java")+"/autoinstrumentation/javaagent.jar", envMap[envJVMAgentPath])
+	assert.Equal(t, langMountPath("nodejs")+"/autoinstrumentation/register.js", envMap[envNodejsAgentPath])
+	assert.Equal(t, otelConfigFilePath, envMap[envOTelConfigFile])
+	assert.Equal(t, otelConfigFilePath, envMap[envOTelExperimentalConfigFile])
+	assert.Equal(t, ldPreloadPath, envMap[envLDPreload])
+}
+
 func TestResolveWorkloadRef_ReplicaSet_DerivesDeployment(t *testing.T) {
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

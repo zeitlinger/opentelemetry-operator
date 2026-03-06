@@ -553,6 +553,109 @@ func TestRollback_DaemonSet_TriggersRollback(t *testing.T) {
 	assert.Contains(t, updatedDs.Spec.Template.Annotations, "kubectl.kubernetes.io/restartedAt")
 }
 
+func TestMergeInventory_PreservesExistingEntry(t *testing.T) {
+	instrumentedAt := metav1.NewTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := metav1.NewTime(time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC))
+	ref := v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "myapp"}
+
+	existing := []v2alpha1.InstrumentedWorkload{{
+		WorkloadRef:    ref,
+		RuleName:       "catch-all",
+		InstrumentedAt: instrumentedAt,
+		CRGeneration:   1,
+	}}
+	current := map[v2alpha1.WorkloadReference]string{ref: "catch-all"}
+
+	result := mergeInventory(existing, current, 1, now)
+	require.Len(t, result, 1)
+	// InstrumentedAt should be preserved from existing, not overwritten with now.
+	assert.Equal(t, instrumentedAt, result[0].InstrumentedAt)
+	assert.Equal(t, int64(1), result[0].CRGeneration)
+}
+
+func TestMergeInventory_AddsNewWorkload(t *testing.T) {
+	now := metav1.NewTime(time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC))
+	ref := v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "newapp"}
+
+	current := map[v2alpha1.WorkloadReference]string{ref: "catch-all"}
+
+	result := mergeInventory(nil, current, 3, now)
+	require.Len(t, result, 1)
+	assert.Equal(t, ref, result[0].WorkloadRef)
+	assert.Equal(t, now, result[0].InstrumentedAt)
+	assert.Equal(t, int64(3), result[0].CRGeneration)
+}
+
+func TestMergeInventory_DropsRemovedWorkload(t *testing.T) {
+	now := metav1.NewTime(time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC))
+	ref := v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "gone"}
+
+	existing := []v2alpha1.InstrumentedWorkload{{
+		WorkloadRef:    ref,
+		RuleName:       "catch-all",
+		InstrumentedAt: now,
+		CRGeneration:   1,
+	}}
+	// Empty current — workload no longer has instrumented pods.
+	current := map[v2alpha1.WorkloadReference]string{}
+
+	result := mergeInventory(existing, current, 1, now)
+	assert.Empty(t, result)
+}
+
+func TestMergeInventory_PreservesRollbackInfo(t *testing.T) {
+	instrumentedAt := metav1.NewTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	rolledBackAt := metav1.NewTime(time.Date(2025, 1, 1, 0, 10, 0, 0, time.UTC))
+	now := metav1.NewTime(time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC))
+	ref := v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "myapp"}
+
+	existing := []v2alpha1.InstrumentedWorkload{{
+		WorkloadRef:    ref,
+		RuleName:       "catch-all",
+		InstrumentedAt: instrumentedAt,
+		CRGeneration:   1,
+		Rollback: &v2alpha1.RollbackInfo{
+			Reason:       "CrashLoopBackOff",
+			RolledBackAt: rolledBackAt,
+		},
+	}}
+	current := map[v2alpha1.WorkloadReference]string{ref: "catch-all"}
+
+	result := mergeInventory(existing, current, 1, now)
+	require.Len(t, result, 1)
+	require.NotNil(t, result[0].Rollback)
+	assert.Equal(t, "CrashLoopBackOff", result[0].Rollback.Reason)
+	assert.Equal(t, rolledBackAt, result[0].Rollback.RolledBackAt)
+}
+
+func TestMergeInventory_MixedExistingAndNew(t *testing.T) {
+	instrumentedAt := metav1.NewTime(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := metav1.NewTime(time.Date(2025, 1, 1, 1, 0, 0, 0, time.UTC))
+	existingRef := v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: "default", Name: "existing"}
+	newRef := v2alpha1.WorkloadReference{Kind: "StatefulSet", Namespace: "default", Name: "newdb"}
+	removedRef := v2alpha1.WorkloadReference{Kind: "DaemonSet", Namespace: "default", Name: "removed"}
+
+	existing := []v2alpha1.InstrumentedWorkload{
+		{WorkloadRef: existingRef, RuleName: "catch-all", InstrumentedAt: instrumentedAt, CRGeneration: 1},
+		{WorkloadRef: removedRef, RuleName: "catch-all", InstrumentedAt: instrumentedAt, CRGeneration: 1},
+	}
+	current := map[v2alpha1.WorkloadReference]string{
+		existingRef: "catch-all",
+		newRef:      "db-rule",
+	}
+
+	result := mergeInventory(existing, current, 2, now)
+	require.Len(t, result, 2)
+
+	// Results are sorted by kind/namespace/name.
+	// Deployment < StatefulSet
+	assert.Equal(t, existingRef, result[0].WorkloadRef)
+	assert.Equal(t, instrumentedAt, result[0].InstrumentedAt) // preserved
+	assert.Equal(t, newRef, result[1].WorkloadRef)
+	assert.Equal(t, now, result[1].InstrumentedAt) // new entry gets now
+	assert.Equal(t, int64(2), result[1].CRGeneration)
+}
+
 func TestRollback_WorkloadDeleted_DroppedFromInventory(t *testing.T) {
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	fakeClock := clocktesting.NewFakeClock(now)
