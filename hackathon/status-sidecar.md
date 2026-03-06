@@ -15,13 +15,13 @@ The language info lives **inside the container**. Getting data out of a running 
 
 ```mermaid
 graph TD
-    subgraph Pod["Pod (running on a Kubernetes node)"]
-        App["App container<br/><br/>Injector runs here<br/>(LD_PRELOAD, before the app starts)<br/><br/>I detected Java!"]
+    subgraph Pod["Pod — running on a Kubernetes node"]
+        App["App container<br/><br/>Injector runs here via LD_PRELOAD,<br/>before the app starts<br/><br/>I detected Java!"]
     end
 
     App -. "??? how does the<br/>operator find out?" .-> Operator
 
-    subgraph Operator["Operator (separate process, runs in its own pod)"]
+    subgraph Operator["Operator — separate process, runs in its own pod"]
         Need["Needs to know: this workload is Java<br/>So it can make smart restart decisions"]
     end
 ```
@@ -46,7 +46,7 @@ Think of it like adding a small "status light" to each instrumented pod that any
 ```mermaid
 graph TD
     subgraph Pod["Inside the Pod"]
-        App["App container<br/>(injector runs here via LD_PRELOAD)"]
+        App["App container<br/>injector runs here via LD_PRELOAD"]
         Vol[("Shared folder<br/>/otel-status/<br/>status.json:<br/>language = java")]
         Sidecar["Sidecar container<br/>HTTP server<br/>GET /metrics<br/>→ language=java"]
 
