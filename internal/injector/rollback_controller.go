@@ -150,7 +150,10 @@ func (r *RollbackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	// Build current workload inventory from live pods.
-	inventory, err := r.buildWorkloadInventory(ctx, &inst)
+	// The pod cache is shared between buildWorkloadInventory and checkCrashState
+	// to avoid redundant API calls for the same namespace.
+	cache := make(podCache)
+	inventory, err := r.buildWorkloadInventory(ctx, &inst, cache)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -176,7 +179,7 @@ func (r *RollbackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 			continue
 		}
 
-		crashReason := r.checkCrashState(ctx, entry.WorkloadRef)
+		crashReason := r.checkCrashState(ctx, cache, entry.WorkloadRef)
 		if crashReason == "" {
 			continue
 		}
@@ -225,8 +228,24 @@ func (r *RollbackReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	return ctrl.Result{}, nil
 }
 
+// podCache caches pod lists by namespace to avoid redundant API calls.
+type podCache map[string][]corev1.Pod
+
+func (r *RollbackReconciler) listPods(ctx context.Context, cache podCache, ns string) ([]corev1.Pod, error) {
+	if pods, ok := cache[ns]; ok {
+		return pods, nil
+	}
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList, client.InNamespace(ns)); err != nil {
+		return nil, fmt.Errorf("listing pods in namespace %s: %w", ns, err)
+	}
+	cache[ns] = podList.Items
+	return podList.Items, nil
+}
+
 // buildWorkloadInventory discovers all pods instrumented by this CR and groups them by workload.
-func (r *RollbackReconciler) buildWorkloadInventory(ctx context.Context, inst *v2alpha1.Instrumentation) (map[v2alpha1.WorkloadReference]string, error) {
+// It populates the provided podCache so callers can reuse the fetched pods.
+func (r *RollbackReconciler) buildWorkloadInventory(ctx context.Context, inst *v2alpha1.Instrumentation, cache podCache) (map[v2alpha1.WorkloadReference]string, error) {
 	inventory := make(map[v2alpha1.WorkloadReference]string)
 
 	for _, rule := range inst.Spec.Rules {
@@ -236,12 +255,12 @@ func (r *RollbackReconciler) buildWorkloadInventory(ctx context.Context, inst *v
 		}
 
 		for _, ns := range namespaces {
-			var podList corev1.PodList
-			if err := r.List(ctx, &podList, client.InNamespace(ns)); err != nil {
-				return nil, fmt.Errorf("listing pods in namespace %s: %w", ns, err)
+			pods, err := r.listPods(ctx, cache, ns)
+			if err != nil {
+				return nil, err
 			}
 
-			for _, pod := range podList.Items {
+			for _, pod := range pods {
 				if !hasOurLDPreload(pod) {
 					continue
 				}
@@ -331,14 +350,14 @@ func mergeInventory(existing []v2alpha1.InstrumentedWorkload, current map[v2alph
 
 // checkCrashState checks if any pod of the given workload is in a crash state.
 // Returns the crash reason or empty string if healthy.
-func (r *RollbackReconciler) checkCrashState(ctx context.Context, ref v2alpha1.WorkloadReference) string {
-	var podList corev1.PodList
-	if err := r.List(ctx, &podList, client.InNamespace(ref.Namespace)); err != nil {
+func (r *RollbackReconciler) checkCrashState(ctx context.Context, cache podCache, ref v2alpha1.WorkloadReference) string {
+	pods, err := r.listPods(ctx, cache, ref.Namespace)
+	if err != nil {
 		r.log.Error(err, "failed to list pods for crash check", "workload", ref)
 		return ""
 	}
 
-	for _, pod := range podList.Items {
+	for _, pod := range pods {
 		wRef := resolveWorkloadRef(pod)
 		if wRef == nil || *wRef != ref {
 			continue

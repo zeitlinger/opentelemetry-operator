@@ -221,9 +221,9 @@ InstrumentationSpec
     - `otel_injector_injection_total` (counter, labels: namespace, instrumentation_cr, mode, result=success|skipped|error) — injection attempts
     - `otel_injector_conflict_detected_total` (counter, labels: namespace, language) — `install_unless_conflict` back-offs
     - `otel_injector_cr_rule_matches_total` (counter, labels: cr_name, rule_name) — which rules are actually matching
-- [ ] **Instrumentation status data model** (Gregor) — Add `status.instrumentedWorkloads[]` to CRD. Foundation for crash-loop recovery, pod bouncing, and internal telemetry
-- [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods. See [design discussion](#crash-loop-auto-recovery) below
-- [ ] **N+1 pod listing in rollback controller** — `buildWorkloadInventory` lists all pods per namespace × per rule, and `checkCrashState` lists all pods per workload entry. For CRs with many rules/namespaces this is O(rules × namespaces) API calls. Fix: collect pods once per namespace and reuse across rules and crash checks within a single reconcile loop.
+- [x] **Instrumentation status data model** (Gregor) — Add `status.instrumentedWorkloads[]` to CRD. Foundation for crash-loop recovery, pod bouncing, and internal telemetry
+- [x] **Crash-loop auto-recovery** (Gregor) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods. See [design discussion](#crash-loop-auto-recovery) below
+- [x] **N+1 pod listing in rollback controller** — `buildWorkloadInventory` and `checkCrashState` now share a per-namespace pod cache within each reconcile loop, reducing API calls from O(rules × namespaces + workloads) to O(namespaces).
 
 ## Crash-loop auto-recovery
 
