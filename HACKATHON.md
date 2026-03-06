@@ -223,6 +223,7 @@ InstrumentationSpec
     - `otel_injector_cr_rule_matches_total` (counter, labels: cr_name, rule_name) — which rules are actually matching
 - [ ] **Instrumentation status data model** (Gregor) — Add `status.instrumentedWorkloads[]` to CRD. Foundation for crash-loop recovery, pod bouncing, and internal telemetry
 - [ ] **Crash-loop auto-recovery** (Gregor, stretch) — detect instrumentation-induced pod failures and avoid re-instrumenting failing pods. See [design discussion](#crash-loop-auto-recovery) below
+- [ ] **N+1 pod listing in rollback controller** — `buildWorkloadInventory` lists all pods per namespace × per rule, and `checkCrashState` lists all pods per workload entry. For CRs with many rules/namespaces this is O(rules × namespaces) API calls. Fix: collect pods once per namespace and reuse across rules and crash checks within a single reconcile loop.
 
 ## Crash-loop auto-recovery
 
