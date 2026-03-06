@@ -21,7 +21,7 @@ spec:
         # Use a glibc-based image so LD_PRELOAD works (Java app image is Debian-based).
         # We override the command to just print env vars — we only care about the injector's
         # modification of JAVA_TOOL_OPTIONS, not running a real Java app.
-        image: ghcr.io/open-telemetry/opentelemetry-operator/e2e-test-app-java:main
+        image: debian:bookworm-slim
         command: ['sh', '-c', 'echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS" && sleep 3600']
         env:
         - name: JAVA_TOOL_OPTIONS
@@ -46,7 +46,7 @@ spec:
     spec:
       containers:
       - name: myapp
-        image: ghcr.io/open-telemetry/opentelemetry-operator/e2e-test-app-java:main
+        image: debian:bookworm-slim
         command: ['sh', '-c', 'echo "JAVA_TOOL_OPTIONS=$JAVA_TOOL_OPTIONS" && sleep 3600']
         env:
         - name: JAVA_TOOL_OPTIONS

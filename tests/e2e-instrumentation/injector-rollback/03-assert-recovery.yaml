@@ -1,6 +1,6 @@
 # After CR update (generation bump), the rollback should be cleared.
 # The workload should still be tracked but without rollback info.
-apiVersion: opentelemetry.io/v2alpha1
+apiVersion: instrumentation.opentelemetry.io/v2alpha1
 kind: Instrumentation
 metadata:
   name: injector-rollback

@@ -12,7 +12,7 @@ spec:
       cleanup:
         - delete:
             ref:
-              apiVersion: opentelemetry.io/v2alpha1
+              apiVersion: instrumentation.opentelemetry.io/v2alpha1
               kind: Instrumentation
               name: injector-mode-conflict
     - name: step-01
@@ -48,8 +48,8 @@ spec:
               INSTALL_OPTS=$(kubectl logs -n ${NAMESPACE} -l app=java-install --tail=10 | grep "JAVA_TOOL_OPTIONS=" | head -1)
               echo "java-install log: $INSTALL_OPTS"
 
-              if ! echo "$INSTALL_OPTS" | grep -q "/otel/javaagent.jar"; then
-                echo "FAIL: mode=install did not inject OTel agent. Expected /otel/javaagent.jar in JAVA_TOOL_OPTIONS"
+              if ! echo "$INSTALL_OPTS" | grep -q "/otel-java/autoinstrumentation/javaagent.jar"; then
+                echo "FAIL: mode=install did not inject OTel agent. Expected /otel-java/autoinstrumentation/javaagent.jar in JAVA_TOOL_OPTIONS"
                 exit 1
               fi
               if ! echo "$INSTALL_OPTS" | grep -q "/fake/foreign-agent.jar"; then
@@ -62,7 +62,7 @@ spec:
               CONFLICT_OPTS=$(kubectl logs -n ${NAMESPACE} -l app=java-conflict --tail=10 | grep "JAVA_TOOL_OPTIONS=" | head -1)
               echo "java-conflict log: $CONFLICT_OPTS"
 
-              if echo "$CONFLICT_OPTS" | grep -q "/otel/javaagent.jar"; then
+              if echo "$CONFLICT_OPTS" | grep -q "/otel-java/autoinstrumentation/javaagent.jar"; then
                 echo "FAIL: mode=install_unless_conflict should have backed off but OTel agent was injected"
                 exit 1
               fi

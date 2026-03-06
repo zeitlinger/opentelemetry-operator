@@ -14,7 +14,7 @@ spec:
     cleanup:
       - delete:
           ref:
-            apiVersion: opentelemetry.io/v2alpha1
+            apiVersion: instrumentation.opentelemetry.io/v2alpha1
             kind: Instrumentation
             name: injector-java
   - name: step-01

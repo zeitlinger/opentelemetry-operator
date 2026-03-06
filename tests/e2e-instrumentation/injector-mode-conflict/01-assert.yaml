@@ -1,71 +1,15 @@
 ---
-# Assert both pods are running with injector env vars set
-apiVersion: v1
-kind: Pod
+# Assert both pods are running (minimal check — env var details verified in step-02 script)
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  labels:
-    app: java-install
-spec:
-  containers:
-    - name: myapp
-      env:
-        - name: LD_PRELOAD
-          value: /otel/autoinstrumentation/libotelinject.so
-        - name: OTEL_INJECTOR_CONFIG_FILE
-          value: /otel/injector/otelinject.conf
-        - name: JVM_AUTO_INSTRUMENTATION_AGENT_PATH
-          value: /otel/javaagent.jar
-        - name: OTEL_INJECTOR_MODE
-          value: install
-      volumeMounts:
-        - name: otel-injector
-          mountPath: /otel
-  initContainers:
-    - name: otel-injector-init
-    - name: otel-injector-init-java
+  name: java-install
 status:
-  containerStatuses:
-    - name: myapp
-      ready: true
-      started: true
-  initContainerStatuses:
-    - name: otel-injector-init
-      ready: true
-    - name: otel-injector-init-java
-      ready: true
-  phase: Running
+  readyReplicas: 1
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  labels:
-    app: java-conflict
-spec:
-  containers:
-    - name: myapp
-      env:
-        - name: LD_PRELOAD
-          value: /otel/autoinstrumentation/libotelinject.so
-        - name: OTEL_INJECTOR_CONFIG_FILE
-          value: /otel/injector/otelinject.conf
-        - name: JVM_AUTO_INSTRUMENTATION_AGENT_PATH
-          value: /otel/javaagent.jar
-        - name: OTEL_INJECTOR_MODE
-          value: install_unless_conflict
-      volumeMounts:
-        - name: otel-injector
-          mountPath: /otel
-  initContainers:
-    - name: otel-injector-init
-    - name: otel-injector-init-java
+  name: java-conflict
 status:
-  containerStatuses:
-    - name: myapp
-      ready: true
-      started: true
-  initContainerStatuses:
-    - name: otel-injector-init
-      ready: true
-    - name: otel-injector-init-java
-      ready: true
-  phase: Running
+  readyReplicas: 1

@@ -1,5 +1,5 @@
 # After rollback, the Instrumentation status should have a rolled-back workload.
-apiVersion: opentelemetry.io/v2alpha1
+apiVersion: instrumentation.opentelemetry.io/v2alpha1
 kind: Instrumentation
 metadata:
   name: injector-rollback
