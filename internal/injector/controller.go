@@ -39,15 +39,13 @@ const (
 // managing ConfigMaps for rules with declarativeConfig.
 type InstrumentationReconciler struct {
 	client.Client
-	scheme *runtime.Scheme
-	log    logr.Logger
+	log logr.Logger
 }
 
 // NewInstrumentationReconciler creates a new reconciler.
-func NewInstrumentationReconciler(c client.Client, scheme *runtime.Scheme, log logr.Logger) *InstrumentationReconciler {
+func NewInstrumentationReconciler(c client.Client, _ *runtime.Scheme, log logr.Logger) *InstrumentationReconciler {
 	return &InstrumentationReconciler{
 		Client: c,
-		scheme: scheme,
 		log:    log,
 	}
 }

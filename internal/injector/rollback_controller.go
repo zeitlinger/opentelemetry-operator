@@ -28,22 +28,23 @@ import (
 const (
 	defaultGraceTime       = 5 * time.Minute
 	defaultStabilityWindow = 1 * time.Hour
+
+	reasonCrashLoopBackOff = "CrashLoopBackOff"
+	reasonImagePullBackOff = "ImagePullBackOff"
 )
 
 // RollbackReconciler watches pods for crash loops and manages rollback state
 // on Instrumentation CRs.
 type RollbackReconciler struct {
 	client.Client
-	scheme *runtime.Scheme
-	log    logr.Logger
-	clock  clockutil.Clock
+	log   logr.Logger
+	clock clockutil.Clock
 }
 
 // NewRollbackReconciler creates a new RollbackReconciler.
-func NewRollbackReconciler(c client.Client, scheme *runtime.Scheme, log logr.Logger) *RollbackReconciler {
+func NewRollbackReconciler(c client.Client, _ *runtime.Scheme, log logr.Logger) *RollbackReconciler {
 	return &RollbackReconciler{
 		Client: c,
-		scheme: scheme,
 		log:    log,
 		clock:  clockutil.RealClock{},
 	}
@@ -93,24 +94,9 @@ func (r *RollbackReconciler) podToInstrumentations(ctx context.Context, obj clie
 	return requests
 }
 
-// isRelevantPod returns true if the pod has our LD_PRELOAD or is in CrashLoopBackOff.
+// isRelevantPod returns true if the pod has our LD_PRELOAD or is in a crash state.
 func isRelevantPod(pod corev1.Pod) bool {
-	for _, c := range pod.Spec.Containers {
-		for _, e := range c.Env {
-			if e.Name == envLDPreload && e.Value == ldPreloadPath {
-				return true
-			}
-		}
-	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil {
-			reason := cs.State.Waiting.Reason
-			if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" {
-				return true
-			}
-		}
-	}
-	return false
+	return hasOurLDPreload(pod) || podCrashReason(pod) != ""
 }
 
 type resolvedRollbackConfig struct {
@@ -276,6 +262,19 @@ func (r *RollbackReconciler) buildWorkloadInventory(ctx context.Context, inst *v
 	return inventory, nil
 }
 
+// podCrashReason returns the crash reason if any container is in a crash state, or "".
+func podCrashReason(pod corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil {
+			reason := cs.State.Waiting.Reason
+			if reason == reasonCrashLoopBackOff || reason == reasonImagePullBackOff {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
 // hasOurLDPreload returns true if any container has our specific LD_PRELOAD value.
 func hasOurLDPreload(pod corev1.Pod) bool {
 	for _, c := range pod.Spec.Containers {
@@ -344,13 +343,8 @@ func (r *RollbackReconciler) checkCrashState(ctx context.Context, ref v2alpha1.W
 		if wRef == nil || *wRef != ref {
 			continue
 		}
-		for _, cs := range pod.Status.ContainerStatuses {
-			if cs.State.Waiting != nil {
-				reason := cs.State.Waiting.Reason
-				if reason == "CrashLoopBackOff" || reason == "ImagePullBackOff" {
-					return reason
-				}
-			}
+		if reason := podCrashReason(pod); reason != "" {
+			return reason
 		}
 	}
 	return ""
@@ -378,9 +372,8 @@ func (r *RollbackReconciler) patchRestartAnnotation(ctx context.Context, ref v2a
 		return fmt.Errorf("unsupported workload kind for restart: %s", ref.Kind)
 	}
 
-	if err := r.Get(ctx, key, obj); err != nil {
-		return err
-	}
+	obj.SetName(key.Name)
+	obj.SetNamespace(key.Namespace)
 	return r.Patch(ctx, obj, client.RawPatch(types.MergePatchType, patch))
 }
 

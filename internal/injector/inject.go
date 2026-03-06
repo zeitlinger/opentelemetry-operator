@@ -278,25 +278,51 @@ func langMountPath(lang string) string {
 	return mountPath + "-" + lang
 }
 
+// langSpec defines a per-language instrumentation image and its agent path.
+// All three build functions (volumes, mounts, env vars) iterate this shared registry.
+type langSpec struct {
+	name      string // e.g. "java"
+	envVar    string // env var pointing the injector to the agent
+	agentPath string // path under /autoinstrumentation/ inside the image
+}
+
+var langSpecs = []langSpec{
+	{"java", envJVMAgentPath, "javaagent.jar"},
+	{"nodejs", envNodejsAgentPath, "register.js"},
+	{"python", envPythonAgentPath, "python"},
+	{"dotnet", envDotnetAgentPath, "dotnet"},
+}
+
+// langImages returns the configured (name, image) pairs from the spec, skipping unconfigured languages.
+func langImages(spec v2alpha1.InstrumentationSpec) []struct {
+	langSpec
+	image string
+} {
+	images := map[string]string{
+		"java": spec.Java, "nodejs": spec.NodeJS,
+		"python": spec.Python, "dotnet": spec.DotNet,
+	}
+	var result []struct {
+		langSpec
+		image string
+	}
+	for _, ls := range langSpecs {
+		if img := images[ls.name]; img != "" {
+			result = append(result, struct {
+				langSpec
+				image string
+			}{ls, img})
+		}
+	}
+	return result
+}
+
 // buildLangImageVolumes returns one image volume per configured language.
 // Each is mounted at its own path (/otel-{lang}) so they don't conflict with each other
 // or the injector volume at /otel.
 func buildLangImageVolumes(spec v2alpha1.InstrumentationSpec) []corev1.Volume {
-	type langImage struct {
-		name  string
-		image string
-	}
-	langs := []langImage{
-		{"java", spec.Java},
-		{"nodejs", spec.NodeJS},
-		{"python", spec.Python},
-		{"dotnet", spec.DotNet},
-	}
 	var volumes []corev1.Volume
-	for _, lang := range langs {
-		if lang.image == "" {
-			continue
-		}
+	for _, lang := range langImages(spec) {
 		volumes = append(volumes, corev1.Volume{
 			Name: langVolumeName(lang.name),
 			VolumeSource: corev1.VolumeSource{
@@ -312,21 +338,8 @@ func buildLangImageVolumes(spec v2alpha1.InstrumentationSpec) []corev1.Volume {
 
 // buildLangVolumeMounts returns volume mounts for all configured per-language image volumes.
 func buildLangVolumeMounts(spec v2alpha1.InstrumentationSpec) []corev1.VolumeMount {
-	type langImage struct {
-		name  string
-		image string
-	}
-	langs := []langImage{
-		{"java", spec.Java},
-		{"nodejs", spec.NodeJS},
-		{"python", spec.Python},
-		{"dotnet", spec.DotNet},
-	}
 	var mounts []corev1.VolumeMount
-	for _, lang := range langs {
-		if lang.image == "" {
-			continue
-		}
+	for _, lang := range langImages(spec) {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      langVolumeName(lang.name),
 			MountPath: langMountPath(lang.name),
@@ -342,28 +355,10 @@ func buildLangVolumeMounts(spec v2alpha1.InstrumentationSpec) []corev1.VolumeMou
 // Users can override any of these in config.env — appendIfNotSet semantics apply.
 func buildLangEnvVars(spec v2alpha1.InstrumentationSpec) []corev1.EnvVar {
 	var envs []corev1.EnvVar
-	if spec.Java != "" {
+	for _, lang := range langImages(spec) {
 		envs = append(envs, corev1.EnvVar{
-			Name:  envJVMAgentPath,
-			Value: langMountPath("java") + "/autoinstrumentation/javaagent.jar",
-		})
-	}
-	if spec.NodeJS != "" {
-		envs = append(envs, corev1.EnvVar{
-			Name:  envNodejsAgentPath,
-			Value: langMountPath("nodejs") + "/autoinstrumentation/register.js",
-		})
-	}
-	if spec.Python != "" {
-		envs = append(envs, corev1.EnvVar{
-			Name:  envPythonAgentPath,
-			Value: langMountPath("python") + "/autoinstrumentation/python",
-		})
-	}
-	if spec.DotNet != "" {
-		envs = append(envs, corev1.EnvVar{
-			Name:  envDotnetAgentPath,
-			Value: langMountPath("dotnet") + "/autoinstrumentation/dotnet",
+			Name:  lang.envVar,
+			Value: langMountPath(lang.name) + "/autoinstrumentation/" + lang.agentPath,
 		})
 	}
 	return envs
@@ -459,18 +454,24 @@ func buildInjectorResourceAttrs(containerName string, ownerRefs []metav1.OwnerRe
 			attrs = append(attrs, fmt.Sprintf("%s=%s", attr, owner.Name))
 		}
 		if owner.Kind == "ReplicaSet" {
-			if idx := strings.LastIndex(owner.Name, "-"); idx > 0 {
-				attrs = append(attrs, fmt.Sprintf("k8s.deployment.name=%s", owner.Name[:idx]))
-			}
+			attrs = append(attrs, fmt.Sprintf("k8s.deployment.name=%s", stripHashSuffix(owner.Name)))
 		}
 		if owner.Kind == "Job" {
-			if idx := strings.LastIndex(owner.Name, "-"); idx > 0 {
-				attrs = append(attrs, fmt.Sprintf("k8s.cronjob.name=%s", owner.Name[:idx]))
-			}
+			attrs = append(attrs, fmt.Sprintf("k8s.cronjob.name=%s", stripHashSuffix(owner.Name)))
 		}
 	}
 
 	return strings.Join(attrs, ",")
+}
+
+// stripHashSuffix removes the trailing "-<hash>" appended by K8s to child resource names
+// (e.g. ReplicaSet "myapp-abc123" → "myapp", Job "cleanup-28450380" → "cleanup").
+// Returns the original name if no hyphen is found.
+func stripHashSuffix(name string) string {
+	if idx := strings.LastIndex(name, "-"); idx > 0 {
+		return name[:idx]
+	}
+	return name
 }
 
 func ownerKindToResourceAttribute(kind string) string {
@@ -508,11 +509,7 @@ func deriveServiceName(pod corev1.Pod) string {
 	for _, owner := range pod.OwnerReferences {
 		switch owner.Kind {
 		case "ReplicaSet":
-			name := owner.Name
-			if idx := strings.LastIndex(name, "-"); idx > 0 {
-				return name[:idx]
-			}
-			return name
+			return stripHashSuffix(owner.Name)
 		case "StatefulSet", "DaemonSet", "Job":
 			return owner.Name
 		}
@@ -527,11 +524,11 @@ func resolveWorkloadRef(pod corev1.Pod) *v2alpha1.WorkloadReference {
 	for _, owner := range pod.OwnerReferences {
 		switch owner.Kind {
 		case "ReplicaSet":
-			name := owner.Name
-			if idx := strings.LastIndex(name, "-"); idx > 0 {
-				return &v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: pod.Namespace, Name: name[:idx]}
+			derived := stripHashSuffix(owner.Name)
+			if derived != owner.Name {
+				return &v2alpha1.WorkloadReference{Kind: "Deployment", Namespace: pod.Namespace, Name: derived}
 			}
-			return &v2alpha1.WorkloadReference{Kind: "ReplicaSet", Namespace: pod.Namespace, Name: name}
+			return &v2alpha1.WorkloadReference{Kind: "ReplicaSet", Namespace: pod.Namespace, Name: owner.Name}
 		case "StatefulSet", "DaemonSet":
 			return &v2alpha1.WorkloadReference{Kind: owner.Kind, Namespace: pod.Namespace, Name: owner.Name}
 		case "Job":
