@@ -27,7 +27,7 @@ const (
 	configFilePath = "/otel/autoinstrumentation/injector/otelinject.conf"
 
 	configVolumePrefix = "otel-config-"
-	configMountPath    = "/otel/config"
+	configMountPath    = "/otel-config"
 	otelConfigFilePath = configMountPath + "/" + configMapDataKey
 
 	envLDPreload          = "LD_PRELOAD"
