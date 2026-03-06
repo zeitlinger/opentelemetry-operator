@@ -16,13 +16,13 @@ The language info lives **inside the container**. Getting data out of a running 
 ```mermaid
 graph TD
     subgraph Pod["Pod (running on a Kubernetes node)"]
-        App["App container\n\nInjector runs here\n(LD_PRELOAD, before the app starts)\n\nI detected Java!"]
+        App["App container<br/><br/>Injector runs here<br/>(LD_PRELOAD, before the app starts)<br/><br/>I detected Java!"]
     end
 
-    App -. "??? how does the\noperator find out?" .-> Operator
+    App -. "??? how does the<br/>operator find out?" .-> Operator
 
     subgraph Operator["Operator (separate process, runs in its own pod)"]
-        Need["Needs to know: this workload is Java\nSo it can make smart restart decisions"]
+        Need["Needs to know: this workload is Java<br/>So it can make smart restart decisions"]
     end
 ```
 
@@ -46,20 +46,20 @@ Think of it like adding a small "status light" to each instrumented pod that any
 ```mermaid
 graph TD
     subgraph Pod["Inside the Pod"]
-        App["App container\n(injector runs here via LD_PRELOAD)"]
-        Vol[("Shared folder\n/otel-status/\nstatus.json:\nlanguage = java")]
-        Sidecar["Sidecar container\nHTTP server\nGET /metrics\n→ language=java"]
+        App["App container<br/>(injector runs here via LD_PRELOAD)"]
+        Vol[("Shared folder<br/>/otel-status/<br/>status.json:<br/>language = java")]
+        Sidecar["Sidecar container<br/>HTTP server<br/>GET /metrics<br/>→ language=java"]
 
-        App -- "Step 1:\nDetects language,\nwrites status.json" --> Vol
-        Vol -- "Step 2:\nReads file,\nserves metrics" --> Sidecar
+        App -- "Step 1:<br/>Detects language,<br/>writes status.json" --> Vol
+        Vol -- "Step 2:<br/>Reads file,<br/>serves metrics" --> Sidecar
     end
 
     subgraph Outside["Outside the Pod"]
-        Operator["Operator\n\nPod X is Java →\nonly bounce Java pods\nwhen Java image changes"]
-        Prom["Prometheus\n\nCluster-wide dashboards:\ninjection rates,\nlanguages, conflicts"]
+        Operator["Operator<br/><br/>Pod X is Java →<br/>only bounce Java pods<br/>when Java image changes"]
+        Prom["Prometheus<br/><br/>Cluster-wide dashboards:<br/>injection rates,<br/>languages, conflicts"]
     end
 
-    Sidecar -- "Step 3:\nOperator or Prometheus\nqueries the sidecar" --> Operator
+    Sidecar -- "Step 3:<br/>Operator or Prometheus<br/>queries the sidecar" --> Operator
     Sidecar --> Prom
 ```
 
@@ -106,16 +106,16 @@ Extensible — future metrics without protocol changes:
 
 ```mermaid
 flowchart TD
-    Change["Config change:\nJava agent image updated\nv1.31 → v1.32"]
-    Change --> Check["Operator checks each\ninstrumented workload"]
+    Change["Config change:<br/>Java agent image updated<br/>v1.31 → v1.32"]
+    Change --> Check["Operator checks each<br/>instrumented workload"]
 
-    Check --> A["App A\nlanguage = java"]
-    Check --> B["App B\nlanguage = python"]
-    Check --> C["App C\nlanguage = ???"]
+    Check --> A["App A<br/>language = java"]
+    Check --> B["App B<br/>language = python"]
+    Check --> C["App C<br/>language = ???"]
 
-    A --> RestartA["RESTART\n(java changed)"]
-    B --> SkipB["SKIP\n(python didn't change)"]
-    C --> RestartC["RESTART\n(unknown = safe default)"]
+    A --> RestartA["RESTART<br/>(java changed)"]
+    B --> SkipB["SKIP<br/>(python didn't change)"]
+    C --> RestartC["RESTART<br/>(unknown = safe default)"]
 
     style RestartA fill:#066,stroke:#099
     style SkipB fill:#555,stroke:#888

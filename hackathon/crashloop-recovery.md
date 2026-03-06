@@ -6,10 +6,10 @@ Auto-detect when instrumentation causes a pod to crash-loop and automatically ba
 
 ```mermaid
 flowchart TD
-    A[Pod crashes] --> B{Time since injection\n< stability window?\n1h default}
-    B -- No --> C[Ignore — crash is\nunrelated to instrumentation]
-    B -- Yes --> D{CrashLoopBackOff\nlasting ≥ grace period?\n5m default}
-    D -- No, recovers --> E[No action —\ntransient startup issue]
+    A[Pod crashes] --> B{Time since injection<br/>< stability window?<br/>1h default}
+    B -- No --> C[Ignore — crash is<br/>unrelated to instrumentation]
+    B -- Yes --> D{CrashLoopBackOff<br/>lasting ≥ grace period?<br/>5m default}
+    D -- No, recovers --> E[No action —<br/>transient startup issue]
     D -- Yes, sustained --> F[ROLLBACK]
 ```
 
@@ -34,36 +34,36 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[Pod created, matches rule] --> B{Workload pods already\nin CrashLoopBackOff?}
-    B -- Yes --> S[Skip injection,\nlog warning]
-    B -- No --> C{Workload in\nstatus.instrumentedWorkloads\nwith rollback set?}
+    A[Pod created, matches rule] --> B{Workload pods already<br/>in CrashLoopBackOff?}
+    B -- Yes --> S[Skip injection,<br/>log warning]
+    B -- No --> C{Workload in<br/>status.instrumentedWorkloads<br/>with rollback set?}
     C -- Yes, CR unchanged --> S
-    C -- No, or CR\ngeneration changed --> D[Inject: LD_PRELOAD,\nenv vars, volumes]
+    C -- No, or CR<br/>generation changed --> D[Inject: LD_PRELOAD,<br/>env vars, volumes]
 ```
 
 **Rollback controller (async, watches pods):**
 
 ```mermaid
 flowchart TD
-    A[New pod for\ninstrumented workload] --> B[Record in\nstatus.instrumentedWorkloads]
-    B --> C{Pod enters\nCrashLoopBackOff?}
-    C -- No --> D[Healthy — no action\nafter stability window]
-    C -- Yes --> E{Within grace\nperiod? 5m}
+    A[New pod for<br/>instrumented workload] --> B[Record in<br/>status.instrumentedWorkloads]
+    B --> C{Pod enters<br/>CrashLoopBackOff?}
+    C -- No --> D[Healthy — no action<br/>after stability window]
+    C -- Yes --> E{Within grace<br/>period? 5m}
     E -- Yes --> F[Requeue, wait]
     F --> C
-    E -- No --> G[Set rollback info\non inventory entry]
-    G --> H[Patch pod template\nrestartedAt annotation]
-    H --> I[New pods created\nwithout injection]
+    E -- No --> G[Set rollback info<br/>on inventory entry]
+    G --> H[Patch pod template<br/>restartedAt annotation]
+    H --> I[New pods created<br/>without injection]
 ```
 
 **Recovery:**
 
 ```mermaid
 flowchart TD
-    A[Workload uninstrumented\nafter rollback] --> B{CR spec changed?\nnew generation}
+    A[Workload uninstrumented<br/>after rollback] --> B{CR spec changed?<br/>new generation}
     B -- No --> A
     B -- Yes --> C[Clear rollback info]
-    C --> D[Next pod admission\n→ webhook injects normally]
+    C --> D[Next pod admission<br/>→ webhook injects normally]
 ```
 
 ## Schema additions
