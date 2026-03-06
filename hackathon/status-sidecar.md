@@ -1,137 +1,186 @@
-# Instrumentation Status Sidecar
+# Instrumentation Status: Language Detection
 
 ## Problem: the operator is blind after injection
 
-When the operator injects instrumentation into a pod, it doesn't know what language the app is. Language detection happens at **runtime** inside the container (the injector binary inspects the process). The operator only knows it injected "something" — not whether it was Java, Python, Node.js, etc.
+When the operator injects instrumentation into a pod, it doesn't know what language the app is. Language detection happens at **runtime** inside the container (the injector binary inspects the process). The operator only knows it injected "something" -- not whether it was Java, Python, Node.js, etc.
 
 This matters for two features:
 
-1. **Selective pod bouncing** — when someone updates the Java agent image in the config, only restart Java workloads, not Python ones. Without language info, we'd restart everything (wasteful).
-2. **Observability dashboards** — "how many pods are instrumented per language?", "how often do conflicts occur?" — needs per-pod language data.
+1. **Selective pod bouncing** -- when someone updates the Java agent image in the config, only restart Java workloads, not Python ones. Without language info, we'd restart everything (wasteful and disruptive).
+2. **Observability dashboards** -- "how many pods are instrumented per language?", "how often do conflicts occur?" -- needs per-pod language data.
 
-## Why is this hard?
+## Options
 
-The language info lives **inside the container**. Getting data out of a running container is surprisingly limited in Kubernetes:
+Three approaches for getting language info back to the operator, each with different trade-offs.
 
-```mermaid
-graph TD
-    subgraph Pod["Pod"]
-        App["App container<br/><br/>Injector runs here via LD_PRELOAD,<br/>before the app starts<br/><br/>I detected Java!"]
-    end
+### Option A: Collector-side language metric
 
-    App -. "??? how does the<br/>operator find out?" .-> Operator
+The instrumented app already sends `telemetry.sdk.language` as a resource attribute with every metric/span/log. The collector processes all this telemetry and can expose a per-workload language gauge on its own `/metrics` endpoint. The operator scrapes the collector directly -- no external Prometheus dependency, no pod-spec changes.
 
-    subgraph Operator["Operator"]
-        Need["Needs to know: this workload is Java<br/>So it can make smart restart decisions"]
-    end
+**Data flow:**
+
+```
+App (instrumented)
+  |  sends telemetry with resource attributes:
+  |    telemetry.sdk.language = "java"
+  |    k8s.namespace.name, k8s.deployment.name (set by operator)
+  v
+Collector
+  |  processor/connector maintains pod -> language map
+  |  exposes on its own /metrics endpoint:
+  |    otel_observed_sdk_language{
+  |      k8s_namespace_name="production",
+  |      k8s_deployment_name="checkout-service",
+  |      telemetry_sdk_language="java"
+  |    } 1
+  v
+Operator scrapes collector /metrics directly
 ```
 
-**Rejected approaches:**
+**Operator integration:**
 
-| Approach | Problem |
-|----------|---------|
-| Container calls Kubernetes API to tag itself | Every pod hits the API server on startup — doesn't scale to thousands of pods |
-| Container calls operator directly | The injector runs very early in process startup (before `main()`), networking may not work reliably at that point |
-| Operator reaches into container (`exec`) | Requires elevated security permissions (`pods/exec`) — most production clusters won't allow this |
-| Write to a shared config file | Kubernetes config mounts are read-only from inside the container |
-| Query OTel collector for `telemetry.sdk.language` | Creates circular dependency on collector availability; telemetry data may be stale or missing when the operator needs to make bounce decisions; requires Prometheus query path in the operator; collector may not even be managed by this operator |
+```
+Instrumentation CR spec:
+  collectorMetricsEndpoint: "http://otel-collector.monitoring:8888/metrics"
 
-## Solution: a Prometheus-compatible status sidecar
-
-We add a small **sidecar container** to each instrumented pod. The injector writes a status file, the sidecar reads it and serves it over HTTP. The operator (or Prometheus) can then query the sidecar at its own pace.
-
-Think of it like adding a small "status light" to each instrumented pod that anyone can check by asking "what language are you?"
-
-### Step by step
-
-```mermaid
-graph TD
-    subgraph Pod["Inside the Pod"]
-        App["App container<br/>injector runs here via LD_PRELOAD"]
-        Vol[("Shared folder<br/>/otel-status/<br/>status.json:<br/>language = java")]
-        Sidecar["Sidecar container<br/>HTTP server<br/>GET /metrics<br/>→ language=java"]
-
-        App -- "Step 1:<br/>Detects language,<br/>writes status.json" --> Vol
-        Vol -- "Step 2:<br/>Reads file,<br/>serves metrics" --> Sidecar
-    end
-
-    subgraph Outside["Outside the Pod"]
-        Operator["Operator<br/><br/>Pod X is Java →<br/>only bounce Java pods<br/>when Java image changes"]
-        Prom["Prometheus<br/><br/>Cluster-wide dashboards:<br/>injection rates,<br/>languages, conflicts"]
-    end
-
-    Sidecar -- "Step 3:<br/>Operator or Prometheus<br/>queries the sidecar" --> Operator
-    Sidecar --> Prom
+On CR spec change:
+  1. Scrape collector metrics endpoint
+  2. Parse otel_observed_sdk_language series -> build workload -> language map
+  3. Diff: which spec fields changed? (e.g. spec.java image)
+  4. Bounce only workloads where language matches changed fields
+  5. Unknown language (no metric yet) -> bounce (safe default)
 ```
 
-### What the sidecar serves
+**Collector component:** A processor or connector that observes `telemetry.sdk.language` from incoming resource attributes and emits a gauge on the collector's internal metrics. This is a small, stateless component -- it just maintains a map of recently-seen `(namespace, deployment, language)` tuples.
 
-Standard Prometheus exposition format — any monitoring tool can read it:
+**Pros:**
+- Zero pod-spec changes -- no sidecar, no shareProcessNamespace, no volumes
+- Zero injector changes -- uses data the SDK already sends
+- Collector is always cluster-local -- no auth, no external dependency on cloud Prometheus
+- Graceful degradation -- without config, bounce all (still works, just less selective)
+- Observability dashboards can scrape the same collector metric
+- Optional -- `collectorMetricsEndpoint` is opt-in
+- Follows the natural data flow -- language info already passes through the collector
+
+**Cons:**
+- Latency -- metric appears after first telemetry export from the app (typically 10-60s). Freshly started pods have no data yet.
+- Requires a collector component (processor/connector) to extract and expose the metric
+- Collector must be reachable from the operator (usually trivial within a cluster)
+- If the collector restarts, the in-memory map is lost until pods re-export (stateless, rebuilds quickly)
+
+**Edge cases:**
+
+| Case | Behavior |
+|------|----------|
+| Pod just started, no telemetry yet | Unknown -> bounce (safe default) |
+| Collector restarted | Map rebuilds as pods export; unknown -> bounce |
+| `collectorMetricsEndpoint` not configured | Selective bouncing disabled, always bounce all |
+| Multi-container pod, different languages | Distinct series per `k8s.container.name` label |
+| Collector not managed by this operator | User sets endpoint manually; works the same |
+
+### Option B: Env var + shareProcessNamespace
+
+The injector already detects language internally (it has to, to know which agent to activate). It sets an additional env var like `OTEL_INJECTOR_DETECTED_LANGUAGE=java` in-process. A sidecar reads this via `/proc/1/environ` using `shareProcessNamespace`.
+
+**Data flow:**
+
+```
+Pod spec:
+  shareProcessNamespace: true    <- operator adds this
+
+  App container:
+    injector runs via LD_PRELOAD
+    sets OTEL_INJECTOR_DETECTED_LANGUAGE=java in-process
+    (no file writes, no new mounts)
+
+  Sidecar container:
+    reads /proc/1/environ -> finds OTEL_INJECTOR_DETECTED_LANGUAGE=java
+    serves GET /metrics -> otel_injector_info{language="java"} 1
+```
+
+**Pros:**
+- Single source of truth -- reads the injector's own detection result, not a second detector
+- No writes from app container -- env var is set in-process, not written to a volume
+- App container security context completely unchanged -- no new mounts, no new write paths
+- Real-time -- available immediately after process starts (no export interval delay)
+
+**Cons:**
+- `shareProcessNamespace` lets all containers see each other's processes and send signals
+- Adds a sidecar container (small: idle HTTP server, ~1m CPU / 8Mi memory)
+- Requires injector change to set `OTEL_INJECTOR_DETECTED_LANGUAGE` -- needs injector SIG acceptance for upstream
+- Env var is only readable via /proc while the process is running
+
+**Security notes:**
+- The sidecar is operator-controlled -- can run with `allowPrivilegeEscalation: false`, drop all capabilities, read-only root FS
+- `shareProcessNamespace` is GA since k8s 1.17, allowed by all PSA profiles including `restricted`
+- The app container gains no new capabilities -- only the sidecar can see processes
+
+### Option C: Status file on shared volume
+
+The injector writes a status file to a shared emptyDir volume. A sidecar reads it and serves metrics over HTTP.
+
+**Data flow:**
+
+```
+Pod:
+  App container:
+    injector writes /otel-status/status.json
+    (language, mode, conflicts)
+
+  Shared emptyDir:
+    /otel-status/status.json
+
+  Sidecar container:
+    reads status.json
+    serves GET /metrics -> otel_injector_info{language="java"} 1
+```
+
+**Prometheus exposition format:**
 
 ```
 otel_injector_info{language="java",mode="install",conflict="false"} 1
 otel_injector_injection_result{result="success"} 1
 ```
 
-Extensible — future metrics without protocol changes:
-- `otel_injector_config_hash{hash="abc123"}` — did the pod pick up the latest config?
-- `otel_injector_conflict_detected{foreign_agent="prometheus-jmx"}` — conflict details
-- `otel_injector_agent_version{language="java",version="1.32.0"}` — agent version tracking
+**Pros:**
+- Richest data -- injector can write arbitrary status (language, mode, conflicts, agent version, config hash)
+- Real-time -- available immediately after LD_PRELOAD runs, before main()
+- No shareProcessNamespace required
+- Extensible without protocol changes
 
-### Why a sidecar?
+**Cons:**
+- App container writes to a shared volume it didn't before -- security concern for read-only deployments
+- "The injector is a part of the application process, it's the very definition of malicious activity" (Nikola's feedback)
+- Adds a sidecar container and an emptyDir volume mount to the app container
+- Requires injector change to write status file -- needs injector SIG acceptance for upstream
 
-1. **No startup latency** — the injector just writes a file (fast), no network calls during the critical startup path
-2. **No elevated permissions** — no `exec`, no API server writes from pods
-3. **Scales** — the operator queries pods at its own pace, not under pod-startup pressure
-4. **Pull-based** — follows the Prometheus model (scraper pulls, target serves), well-understood and battle-tested
+**Mitigations:**
+- `medium: Memory` (tmpfs) -- no disk I/O, no persistence, explicit `sizeLimit: 1Mi`
+- emptyDir is allowed under PSA `restricted` profile
+- The operator controls both sides (volume, mount, sidecar)
 
-### Sidecar overhead
+## Comparison
 
-- **Image:** reuses the injector image (already present) with a `serve` subcommand — no extra download
-- **CPU/memory:** idle HTTP server, requests: 1m CPU / 8Mi memory
+| | A: Collector metric | B: Env var + shareProcessNamespace | C: Status file |
+|---|---|---|---|
+| Pod-spec changes | None | shareProcessNamespace + sidecar | emptyDir + sidecar |
+| App container changes | None | None | New volume mount (writable) |
+| Injector changes | None | Set env var | Write file |
+| Collector changes | Processor/connector to expose metric | None | None |
+| Data availability | After first export (10-60s) | Immediate | Immediate |
+| Data richness | telemetry.sdk.language only | Language only (extensible via more env vars) | Arbitrary (JSON) |
+| External dependency | Collector reachable from operator | None | None |
+| Selective bouncing | Yes (with fallback) | Yes | Yes |
+| Observability dashboards | Scrape same collector metric | Needs PodMonitor scraping sidecar | Needs PodMonitor scraping sidecar |
+| Security posture | No change | shareProcessNamespace (containers see each other's processes) | App writes to shared volume |
+| Injector SIG acceptance | No changes needed | Needs env var addition | Needs file write addition |
 
-### Two consumers, one endpoint
+## Rejected approaches
 
-**Operator (rollback controller):**
-- Already maintains `status.instrumentedWorkloads[]` for each CR
-- On CR spec change, scrapes only affected pods (by pod IP) to read `detectedLanguage`
-- Selective bounce: if `spec.java` changed, only restart workloads where `language="java"`
-- If scrape fails or sidecar not ready, falls back to bouncing the workload (safe default)
+### Options B and C: Injector reports language back
 
-**Prometheus (cluster-wide observability):**
-- `PodMonitor` selects pods with the `otel-status` port
-- Feeds Grafana dashboards: injection success rates, language distribution, conflict frequency
-- Operator is NOT in this path — no bottleneck
+Both Option B (env var + shareProcessNamespace) and Option C (status file) assume the injector binary detects the language and can report it back. In the composite SDK injection model, **the injector doesn't know the language**. It's language-agnostic — it sets up LD_PRELOAD and the composite SDK handles everything. Since the injector doesn't detect language, it can't report it, which invalidates both approaches.
 
-### Selective pod bouncing flow
+## Recommendation
 
-```mermaid
-flowchart TD
-    Change["Config change:<br/>Java agent image updated<br/>v1.31 → v1.32"]
-    Change --> Check["Operator checks each<br/>instrumented workload"]
-
-    Check --> A["App A<br/>language = java"]
-    Check --> B["App B<br/>language = python"]
-    Check --> C["App C<br/>language = ???"]
-
-    A --> RestartA["RESTART<br/>(java changed)"]
-    B --> SkipB["SKIP<br/>(python didn't change)"]
-    C --> RestartC["RESTART<br/>(unknown = safe default)"]
-
-    style RestartA fill:#066,stroke:#099
-    style SkipB fill:#555,stroke:#888
-    style RestartC fill:#066,stroke:#099
-```
-
-### Schema additions
-
-```
-InstrumentedWorkload (existing, in status.instrumentedWorkloads[])
-  detectedLanguage    string            # "java", "python", etc. — populated from sidecar scrape
-```
-
-### Open questions
-
-- **Port choice:** should avoid 4318 (OTLP default) to prevent conflicts if the app runs a collector
-- **Multi-container pods:** one sidecar per pod with per-container labels in metrics, or one per container?
-- **Opt-out:** should there be a way to disable the sidecar for minimal-footprint environments?
+**Option A (collector metric)** is the only viable approach. It doesn't depend on the injector knowing the language — it uses `telemetry.sdk.language` from the SDK itself, which is set regardless of how instrumentation was injected. Zero pod changes, zero injector changes, follows the natural telemetry data flow. Accept the 10-60s latency and bounce-all fallback.
