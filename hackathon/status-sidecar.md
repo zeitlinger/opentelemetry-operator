@@ -34,6 +34,7 @@ graph TD
 | Container calls operator directly | The injector runs very early in process startup (before `main()`), networking may not work reliably at that point |
 | Operator reaches into container (`exec`) | Requires elevated security permissions (`pods/exec`) — most production clusters won't allow this |
 | Write to a shared config file | Kubernetes config mounts are read-only from inside the container |
+| Query OTel collector for `telemetry.sdk.language` | Creates circular dependency on collector availability; telemetry data may be stale or missing when the operator needs to make bounce decisions; requires Prometheus query path in the operator; collector may not even be managed by this operator |
 
 ## Solution: a Prometheus-compatible status sidecar
 
